@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension (Single instance for both relational data & vector search)
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: campusgrid-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: campusgrid_db
+      POSTGRES_USER: campusgrid_user
+      POSTGRES_PASSWORD: campusgrid_secure_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/data/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  pgdata:
