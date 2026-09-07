@@ -6,10 +6,11 @@ Ensures LLM output quotes strictly verified solver figures and tariff rules.
 import json
 from typing import Dict, Any, List, Optional
 from src.domain.interfaces.llm import LLMProvider, LLMMessage
+from src.domain.interfaces.optimizer import FaithfulnessVerifierInterface
 from src.domain.entities.optimization import OptimizationResult
 from src.prompts.manager import get_prompt_manager, PromptManager
 
-class FaithfulnessVerifier:
+class FaithfulnessVerifier(FaithfulnessVerifierInterface):
     """Audits generated explanations for factual grounding."""
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: Optional[PromptManager] = None):

@@ -9,8 +9,9 @@ from typing import List
 import pulp
 from src.domain.entities.optimization import OptimizationInput, OptimizationResult, BindingConstraint
 from src.domain.exceptions.base import InfeasibleOptimizationError
+from src.domain.interfaces.optimizer import MicrogridOptimizerInterface
 
-class BaselineCampusMicrogridOptimizer:
+class BaselineCampusMicrogridOptimizer(MicrogridOptimizerInterface):
     """Deterministic PuLP Linear / MILP Optimization Solver."""
 
     def __init__(self, battery_cap_kwh: float = 500.0, max_kw: float = 100.0):

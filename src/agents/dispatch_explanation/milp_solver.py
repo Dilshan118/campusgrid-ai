@@ -20,8 +20,9 @@ from typing import List, Dict, Any, Tuple
 import pulp
 from src.domain.entities.optimization import OptimizationInput, OptimizationResult, BindingConstraint
 from src.domain.exceptions.base import InfeasibleOptimizationError
+from src.domain.interfaces.optimizer import MicrogridOptimizerInterface
 
-class CampusMicrogridOptimizer:
+class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
     """
     Deterministic PuLP Linear / MILP Optimization Solver.
     Assigned to: Member 4

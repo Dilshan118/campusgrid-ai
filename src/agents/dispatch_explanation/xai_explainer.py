@@ -5,10 +5,11 @@ Translates numerical MILP solver outputs and retrieved tariff citations into pla
 
 from typing import Dict, Any, List, Optional
 from src.domain.interfaces.llm import LLMProvider, LLMMessage
+from src.domain.interfaces.optimizer import XAIExplainerInterface
 from src.domain.entities.optimization import OptimizationResult
 from src.prompts.manager import get_prompt_manager, PromptManager
 
-class XAIExplainer:
+class XAIExplainer(XAIExplainerInterface):
     """Grounded plain-English justification builder."""
 
     def __init__(self, llm_provider: LLMProvider, prompt_manager: Optional[PromptManager] = None):

@@ -6,11 +6,16 @@ and synthesizes plain-English XAI justifications grounded in verified solver log
 
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
+from src.domain.entities.optimization import OptimizationInput
+from src.domain.interfaces.llm import LLMProvider
+from src.domain.interfaces.optimizer import (
+    MicrogridOptimizerInterface,
+    XAIExplainerInterface,
+    FaithfulnessVerifierInterface,
+)
 from src.agents.dispatch_explanation.milp_solver import CampusMicrogridOptimizer
 from src.agents.dispatch_explanation.xai_explainer import XAIExplainer
 from src.agents.dispatch_explanation.faithfulness import FaithfulnessVerifier
-from src.domain.entities.optimization import OptimizationInput
-from src.domain.interfaces.llm import LLMProvider
 
 class DispatchExplanationAgent(BaseAgent):
     """Agent 4: Solves microgrid dispatch and explains actions to operators."""
@@ -18,9 +23,9 @@ class DispatchExplanationAgent(BaseAgent):
     def __init__(
         self,
         llm_provider: LLMProvider,
-        optimizer: Optional[CampusMicrogridOptimizer] = None,
-        explainer: Optional[XAIExplainer] = None,
-        verifier: Optional[FaithfulnessVerifier] = None
+        optimizer: Optional[MicrogridOptimizerInterface] = None,
+        explainer: Optional[XAIExplainerInterface] = None,
+        verifier: Optional[FaithfulnessVerifierInterface] = None
     ):
         super().__init__(
             name="Agent 4: Dispatch & Explanation",
