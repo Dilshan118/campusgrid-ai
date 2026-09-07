@@ -5,7 +5,7 @@ Assigned to: Member 1 (Team Lead - Information Retrieval & Regulatory RAG)
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
-from src.domain.entities.rag import RetrievedChunk
+from src.domain.entities.rag import SearchPassage, DocumentClause, Citation
 
 class RegulatoryRuleExtractorInterface(ABC):
     """Abstract interface for extracting structured tariff figures and regulatory limits from policy text."""
@@ -23,6 +23,6 @@ class PolicySearchEngineInterface(ABC):
     """Abstract interface for hybrid semantic search over institutional energy documents."""
 
     @abstractmethod
-    def search(self, query: str, top_k: int = 3) -> List[RetrievedChunk]:
+    def search(self, query: str, top_k: int = 3) -> List[SearchPassage]:
         """Executes hybrid dense + BM25 search and returns ranked policy clauses with citations."""
         pass
