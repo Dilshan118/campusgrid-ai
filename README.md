@@ -14,7 +14,7 @@ It solves the **15-minute peak demand penalty trap** under Ceylon Electricity Bo
 
 ```
                   THE 4-AGENT SEQUENTIAL PIPELINE
-    [ User Query ] ──► [ Central Orchestrator: Python / LangGraph ]
+    [ User Query ] ──► [ Central Orchestrator: deterministic Python pipeline ]
                               │
                               ▼
     [ Agent 1: Telemetry & Forecasting ] ────Forecast────► [ Agent 2: Digital Twin Simulation ]
@@ -31,13 +31,26 @@ It solves the **15-minute peak demand penalty trap** under Ceylon Electricity Bo
 
 ## 2. Technology Stack & Key Frameworks
 
-* **Frontend:** React 18 Single Page Application (SPA), Vite, Tailwind CSS, Lucide React, Recharts.
-* **Backend Gateway:** FastAPI (Asynchronous Python Web Framework), Uvicorn, WebSockets.
-* **Orchestration:** LangGraph State Machine, spaCy (`en_core_web_sm`) explicit Named Entity Recognition.
-* **Database & Vector Search:** **Neon Serverless PostgreSQL 16** with native `pgvector` extension.
-* **Mathematical Optimizer:** Deterministic Mixed-Integer Linear Programming (MILP) with `PuLP` and `HiGHS`.
-* **Physics Digital Twin:** Continuous 2-Resistance 2-Capacitance (2R2C) Equivalent Thermal Network.
-* **Pluggable LLM Manager:** LiteLLM provider factory supporting Google Gemini, OpenAI, Claude, Groq, and Ollama with zero code changes.
+Items marked **(planned)** are on the roadmap but not yet in the codebase. Everything else
+is implemented and covered by the test suite.
+
+* **Frontend:** React 18 Single Page Application, Vite, Tailwind CSS, Lucide React, Recharts.
+* **Backend Gateway:** FastAPI + Uvicorn. Each agent is reachable over its own REST endpoint.
+* **Orchestration:** Deterministic sequential Python pipeline with typed hand-offs between
+  agents. Intent parsing is rule-based today; **spaCy `en_core_web_sm` NER and LLM intent
+  routing are planned.** LangGraph was evaluated and deliberately not adopted — the pipeline
+  has no cycles or conditional graph state, so it would add dependency weight without value.
+* **Database & Vector Search:** **Neon Serverless PostgreSQL 16** with the `pgvector` extension —
+  relational tables and embeddings in one engine. ChromaDB and an in-memory store are also
+  available as drop-in adapters.
+* **Information Retrieval:** Hybrid search — dense vector similarity plus Okapi BM25 keyword
+  matching, merged with Reciprocal Rank Fusion (k=60).
+* **Mathematical Optimizer:** Deterministic Mixed-Integer Linear Programming with `PuLP` and
+  the CBC solver, over 48 half-hour intervals.
+* **Physics Digital Twin:** Continuous 2-Resistance 2-Capacitance (2R2C) thermal network.
+* **Pluggable LLM Manager:** LiteLLM provider factory supporting Google Gemini, OpenAI, Claude,
+  Groq and Ollama — plus a deterministic mock provider for offline CI — switchable by one
+  environment variable with zero code changes.
 
 ---
 
@@ -67,19 +80,39 @@ Open `.env` and fill in:
    python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
-2. Install dependencies:
+2. Install dependencies. `pyproject.toml` is the single source of dependency truth:
    ```bash
-   pip install -r backend/requirements.txt
+   pip install -e ".[all]"        # what every team member should run
    ```
-3. Initialize the database schema (connects to Neon and creates `vector` extension and tables):
+   Lighter installs are available if you do not need the heavy extras:
+   | Command | Gives you |
+   |---|---|
+   | `pip install -e ".[dev]"` | API + full test suite on mock providers (fast, no torch) |
+   | `pip install -e ".[postgres]"` | adds the Neon / PostgreSQL driver |
+   | `pip install -e ".[rag]"` | adds real sentence-transformers embeddings and PDF ingestion |
+   | `pip install -e ".[ml]"` | adds LightGBM / scikit-learn / scipy for forecasting and physics fitting |
+
+3. Verify the install before touching anything else:
    ```bash
-   python -c "from backend.core.database import init_db; init_db(); print('Database initialized successfully!')"
+   pytest tests/ -v
    ```
-4. Start the FastAPI development server:
+
+4. **Optional — connect a real database.** The app defaults to `DATABASE_PROVIDER=in_memory`
+   and needs no database at all. To use Neon or local PostgreSQL, apply the schema first:
    ```bash
-   uvicorn backend.main:app --reload --port 8000
+   psql "$DATABASE_URL" -f backend/data/init.sql
    ```
-   * Interactive Swagger Documentation available at: `http://localhost:8000/docs`
+   > Applying `init.sql` is **required**. `init_db()` only creates the `vector` and
+   > `uuid-ossp` extensions — it defines no tables, because the project has no SQLModel
+   > table classes. Skipping this step leaves you with an empty schema and confusing
+   > runtime errors.
+
+5. Start the FastAPI development server:
+   ```bash
+   uvicorn src.api.main:app --reload --port 8000
+   ```
+   * Interactive Swagger documentation: `http://localhost:8000/docs`
+   * `uvicorn backend.main:app` still works — it is a compatibility shim re-exporting the same app.
 
 ---
 
@@ -99,85 +132,90 @@ Open `.env` and fill in:
 
 ## 4. Codebase Architecture
 
+The application lives in **`src/`**, organised as Clean Architecture. Dependencies point
+inward only: `api → application → domain`, with `infrastructure` plugged in at the edges.
+Agents depend on **interfaces**, never on a vendor — only the DI container and the
+factories know which concrete provider is active.
+
 ```
 campusgrid-ai/
-├── README.md                                   # Root project documentation
-├── .env.example                                # Environment variable blueprint
-├── docker-compose.yml                          # Optional local PostgreSQL + pgvector container
+├── pyproject.toml                              # SINGLE source of dependency truth
+├── .env.example                                # Every provider switch, documented
+├── Dockerfile · docker-compose.yml             # Backend image · local pgvector
 │
-├── frontend/                                   # React 18 Single Page Application
-│   ├── package.json                            # Frontend dependencies
-│   ├── vite.config.js                          # Build configuration and backend proxy
-│   ├── tailwind.config.js                      # Dark-mode styling configuration
-│   └── src/
-│       ├── App.jsx                             # Multi-view dashboard shell
-│       ├── components/                         # UI cards, charts, and drawers
-│       └── pages/                              # Overview, Twin, Optimizer, Analytics views
+├── src/                                        # ◀── THE APPLICATION
+│   │
+│   ├── domain/                                 # Pure business core — zero vendor imports
+│   │   ├── entities/                           # TelemetryInterval, OptimizationResult, …
+│   │   ├── interfaces/                         # ALL abstract contracts (ports)
+│   │   │   ├── llm.py  embeddings.py  vector_store.py  repositories.py
+│   │   │   ├── cache.py  reranker.py  tool.py  database.py
+│   │   │   ├── forecaster.py                   # Agent 1 contract   (Developer 1)
+│   │   │   ├── thermal_twin.py                 # Agent 2 contracts  (Developer 2)
+│   │   │   ├── policy_extractor.py             # Agent 3 contracts  (Team Lead)
+│   │   │   └── optimizer.py                    # Agent 4 contracts  (Developer 3)
+│   │   └── exceptions/                         # Structured domain exception hierarchy
+│   │
+│   ├── application/
+│   │   ├── container.py                        # DI composition root — LEAD ONLY
+│   │   └── services/                           # RetrievalService, AuditService
+│   │
+│   ├── agents/                                 # The 4 agents + coordinator
+│   │   ├── base/                               # BaseAgent: timing, tracing, error isolation
+│   │   ├── coordinator/                        # Deterministic pipeline + NLP parser
+│   │   ├── telemetry/                          # Agent 1 — Developer 1
+│   │   ├── digital_twin/                       # Agent 2 — Developer 2
+│   │   ├── policy_rag/                         # Agent 3 — Team Lead
+│   │   └── dispatch_explanation/               # Agent 4 — Developer 3
+│   │
+│   ├── infrastructure/                         # Swappable adapters (the only vendor code)
+│   │   ├── llm/                                # LiteLLM (Gemini/OpenAI/Claude/Groq/Ollama) + mock
+│   │   ├── embeddings/                         # SentenceTransformers + mock
+│   │   ├── vector_store/                       # pgvector · Chroma · in-memory
+│   │   ├── retrieval/                          # Okapi BM25 + Reciprocal Rank Fusion
+│   │   ├── database/repositories/              # One file per entity — see ownership below
+│   │   ├── tools/                              # Weather (Dev 1) · Simulation (Dev 2)
+│   │   ├── reference_baselines/                # Working stand-ins — FROZEN, read-only
+│   │   ├── cache/  observability/
+│   │
+│   ├── api/                                    # FastAPI gateway — 8 routers + middleware
+│   ├── config/settings.py                      # All provider switches — LEAD ONLY
+│   ├── prompts/                                # Externalised prompt templates
+│   ├── pipelines/periodic_retraining/          # Offline model training (Developer 1)
+│   ├── schemas/                                # Public request/response DTOs
+│   └── shared/                                 # Constants, datetime helpers
 │
-├── backend/                                    # FastAPI Backend & Agent Core
-│   ├── main.py                                 # Server entry point with CORS & router mount
-│   ├── requirements.txt                        # Pinned backend dependencies
-│   │
-│   ├── security/                               # Access & Security Layer (Auth, RBAC, Audit Store)
-│   ├── orchestrator/                           # Central LangGraph state machine & spaCy NER
-│   │
-│   ├── agents/                                 # The 4 Specialized Agents
-│   │   ├── agent1_telemetry_forecasting/       # Agent 1 (ML · Data)
-│   │   ├── agent2_digital_twin/                # Agent 2 (Physics · Simulation / MCP)
-│   │   ├── agent3_policy_rag/                  # Agent 3 (IR · NLP · RAG / pgvector)
-│   │   └── agent4_dispatch_explanation/        # Agent 4 (LLM · MILP Optimization)
-│   │
-│   ├── pipelines/                              # Offline Pipelines
-│   │   ├── document_ingestion/                 # PDF extraction & pgvector indexer
-│   │   └── periodic_retraining/                # Historical model refitting scripts
-│   │
-│   ├── core/                                   # Config, Database, and Pydantic Contracts
-│   │   ├── config.py                           # Settings manager with Neon & LLM support
-│   │   ├── database.py                         # SQLModel engine with pgvector
-│   │   ├── llm_manager.py                      # Zero-code pluggable LLM provider switch
-│   │   └── contracts/                          # Immutable Pydantic v2 schemas
-│   │
-│   └── data/
-│       ├── init.sql                            # PostgreSQL tables & pgvector DDL
-│       └── seeds/sample_campus_seed.csv        # 48-period campus benchmark dataset
+├── backend/                                    # Compatibility shims → re-export from src/
+│   └── data/                                   # init.sql schema + 48-interval seed CSV
 │
-├── docs/                                       # Coursework Specifications & Architecture
-│   ├── CAMPUSGRID_AI_SIMPLIFIED_SRS_AND_SYSTEM_GUIDE.md
-│   ├── CAMPUSGRID_AI_FULL_MARKING_RUBRIC_EVALUATION.md
-│   ├── CAMPUSGRID_AI_MASTER_ARCHITECTURAL_BLUEPRINT_AND_SRS.md
-│   └── 04_COURSEWORK_SPECIFICATIONS_AND_RUBRICS.md
-│
+├── frontend/                                   # React 18 + Vite SPA (Team Lead)
+├── docs/                                       # Coursework specifications & SRS
+├── TEAM_GUIDES/                                # Role briefs + authoritative ownership matrix
 └── tests/
-    ├── unit/                                   # Unit test suite
-    └── red_team_security_audits/               # 60-Test Red Team Security Audit Harness
+    ├── unit/  integration/                     # 45 tests
+    └── red_team_security_audits/               # 4 × 15-case individual audits
 ```
 
 ---
 
-## 5. Team Delegation Matrix
+## 5. Team Delegation
 
-```
-+──────────┬─────────────────────────────┬─────────────────────────────────┬───────────────────────+
-│ Member   │ Engineering Workstream      │ Codebase Ownership              │ Security Audit Focus  │
-+──────────┼─────────────────────────────┼─────────────────────────────────┼───────────────────────+
-│ Member 1 │ Project Lead, Full-Stack UI,│ `frontend/`,                    │ Student 1:            │
-│ (Lead)   │ Orchestrator, Web Analytics │ `backend/security/`,            │ Prompt Injection &    │
-│          │ & Agent 3 (Policy RAG)      │ `backend/orchestrator/`,        │ Jailbreak Analysis    │
-│          │ + Ingestion Pipeline        │ `backend/agents/agent3_.../`    │                       │
-+──────────┼─────────────────────────────┼─────────────────────────────────┼───────────────────────+
-│ Member 2 │ ML & Telemetry Lead         │ `backend/agents/`               │ Student 2:            │
-│ (Team A) │ - Agent 1: Telemetry & ML   │ `agent1_telemetry_forecasting/`,│ Privacy & Data Leakage│
-│          │ - Weather API & 24h forecast│ `backend/pipelines/retraining/` │ (NILM & Diff Privacy) │
-+──────────┼─────────────────────────────┼─────────────────────────────────┼───────────────────────+
-│ Member 3 │ Digital Twin & Physics Lead │ `backend/agents/`               │ Student 4:            │
-│ (Team B) │ - Agent 2: Digital Twin Sim │ `agent2_digital_twin/`          │ Infrastructure & MCP  │
-│          │ - 2R2C thermal equations    │                                 │ Interception Security │
-│          │ - What-If perturbation sim  │                                 │                       │
-+──────────┼─────────────────────────────┼─────────────────────────────────┼───────────────────────+
-│ Member 4 │ Optimization & AI Lead      │ `backend/agents/`               │ Student 3:            │
-│ (Team C) │ - Agent 4: Dispatch Solver  │ `agent4_dispatch_explanation/`, │ Responsible AI, Bias  │
-│          │ - PuLP 48-interval MILP math│ `backend/security/audit_store.py│ & Faithfulness        │
-+──────────┴─────────────────────────────┴─────────────────────────────────┴───────────────────────+
+> **Authoritative file ownership lives in [`TEAM_GUIDES/OWNERSHIP.md`](TEAM_GUIDES/OWNERSHIP.md).**
+> Read it before your first commit. Ownership tables inside `docs/` are earlier drafts kept
+> as-submitted for the coursework record; where they disagree, `OWNERSHIP.md` wins.
+
+| Member | Role | Owns | Individual audit |
+|---|---|---|---|
+| **Member 1** | Team Lead & Architect | `src/domain/`, `src/api/`, `src/application/container.py`, `src/config/`, Agent 3 Policy RAG, ingestion, analytics, `frontend/` | Student 1 — Prompt Injection & Jailbreak |
+| **Member 2** | Developer 1 — Data & ML | `src/agents/telemetry/`, meter + timetable repositories, `weather_tool.py`, retraining pipeline | Student 2 — Privacy & Data Leakage |
+| **Member 3** | Developer 2 — Digital Twin | `src/agents/digital_twin/`, `simulation_tool.py` | Student 4 — Retrieval, Tool & MCP Security |
+| **Member 4** | Developer 3 — Optimization & Responsible AI | `src/agents/dispatch_explanation/` (whole folder) | Student 3 — Responsible AI, Bias & Faithfulness |
+
+**Three rules that prevent almost every merge conflict here:**
+
+1. Never commit a file you do not own.
+2. `container.py` and `settings.py` are **request-only** — open an issue, the Lead edits.
+3. Rebase on `main` every morning.
 ```
 
 ---

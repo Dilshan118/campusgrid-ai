@@ -117,8 +117,6 @@ A facility manager with a spreadsheet cannot compute this in real time. **Campus
 
 # 4. End-to-End System Architecture & Decoupled Topology
 
-![CampusGrid AI System Architecture Diagram](file:///Users/dilshanrajapakshe/Documents/SLIIT/GitHub/IRWA%20project/docs/system_architecture_diagram.jpg)
-
 ```
 +─────────────────────────────────────────────────────────────────────────────────────────────────+
 |                                UNIVERSITY CAMPUS PHYSICAL BOUNDARY                              |
@@ -145,13 +143,13 @@ A facility manager with a spreadsheet cannot compute this in real time. **Campus
 |  +----------------------+      +----------------------+      +-------------------------------+  |
 |  | ML Demand Forecaster |      | 2R2C Digital Twin    |      | Deterministic MILP Optimizer  |  |
 |  | - LightGBM / XGBoost |----->| - Thermal Dynamics   |----->| - Cost & Peak Shaving Solver  |  |
-|  | - 24-hr Ahead Load/PV|      | - What-If Simulator  |      | - PuLP / HiGHS Engines        |  |
+|  | - 24-hr Ahead Load/PV|      | - What-If Simulator  |      | - PuLP / CBC Solver Engine    |  |
 |  +----------------------+      +----------------------+      +---------------+---------------+  |
 |                                                                              |                  |
 |                                                                              v                  |
 |                                 +------------------------------------------------------------+  |
 |                                 | Hybrid RAG Knowledge Engine                                |  |
-|                                 | (ChromaDB Dense + BM25 Sparse + Cross-Encoder Reranker)    |  |
+|                                 | (pgvector Dense + BM25 Sparse + Reciprocal Rank Fusion)    |  |
 |                                 +-----------------------------+------------------------------+  |
 |                                                               |                                 |
 |                                                               v                                 |
@@ -162,14 +160,14 @@ A facility manager with a spreadsheet cannot compute this in real time. **Campus
 |                                                               |                                 |
 |                                                               v                                 |
 |                                 +------------------------------------------------------------+  |
-|                                 | Facility Interface Agent (LLM + spaCy NER)                 |  |
-|                                 | - LangGraph Multi-Agent DAG State Machine Orchestrator     |  |
+|                                 | Facility Interface Agent (LLM + NER)                       |  |
+|                                 | - Deterministic Sequential Multi-Agent Orchestrator        |  |
 |                                 | - Natural Language Explainable AI (XAI) Synthesis          |  |
 |                                 +-----------------------------+------------------------------+  |
 +───────────────────────────────────────────────────────────────|─────────────────────────────────+
                                                                 v
                                                   +───────────────────────────+
-                                                  | FastAPI Gateway & WSS Hub |
+                                                  | FastAPI REST Gateway      |
                                                   | (JSON-RPC, REST, Auth)    |
                                                   +─────────────┬─────────────+
                                                                 v
@@ -197,7 +195,7 @@ A facility manager with a spreadsheet cannot compute this in real time. **Campus
 graph TD
     User([Campus Facility Manager]) <--> UI[React 18 Web Dashboard\nNatural Language Query + Recommendations]
     UI <--> Sec[Access & Security Layer\nHTTPS · Auth · RBAC · Audit Store]
-    Sec <--> Orch[Central Orchestrator\nPython / LangGraph · NLP Query Parser]
+    Sec <--> Orch[Central Orchestrator\nDeterministic Python Pipeline · NLP Query Parser]
     
     Orch -- "Task Routing" --> A1[Agent 1 – Telemetry & Forecasting\nML · Data · Day-Ahead Demand & PV]
     A1 -- "Forecast" --> A2[Agent 2 – Digital Twin Simulation\nPhysics · 2R2C Model · What-If Feasibility]
@@ -216,14 +214,14 @@ graph TD
 +───────────────────────────────────┬──────────────────────────────────────────────────────────────+
 | Agent / Entity Identity           | Core Responsibilities & Operational Competencies             |
 +───────────────────────────────────┼──────────────────────────────────────────────────────────────+
-| Central Orchestrator              | - Central workflow router and state machine (LangGraph).     |
-| (Python / LangGraph)              | - NLP extracts query into fields: action, date, room, target.|
+| Central Orchestrator              | - Central workflow router with deterministic agent ordering. |
+| (Deterministic Python pipeline)   | - NLP extracts query into fields: action, date, room, target.|
 |                                   | - LLM plans agent calling sequence; returns grounded answer. |
 +───────────────────────────────────┼──────────────────────────────────────────────────────────────+
 | Agent 1 – Telemetry & Forecasting | - Reads meters, timetables, and room occupancy from Postgres.|
 | (ML · Data)                       | - Pulls external weather forecast for campus coordinates.    |
 |                                   | - Forecasts 24-hr demand & solar PV curves with confidence.  |
-|                                   | - Flags abnormal consumption spikes (Isolation Forest).      |
+|                                   | - Flags abnormal consumption spikes (threshold; IF planned). |
 |                                   | - Predicts only — does not choose an action.                 |
 +───────────────────────────────────┼──────────────────────────────────────────────────────────────+
 | Agent 2 – Digital Twin Simulation | - 2R2C Equivalent Thermal Network physics simulation.        |
@@ -248,7 +246,7 @@ graph TD
 
 ### 5.2 Inter-Agent Protocols & Security Envelope
 1. **Model Context Protocol (MCP):** Standardized, typed JSON-RPC interface for tool invocations between the Facility Interface Agent and the backend solver/RAG agents.
-2. **JSON-RPC 2.0 over Secure WebSockets (WSS):** High-throughput, bidirectional streaming of telemetry readings and dispatch setpoints.
+2. **REST over HTTPS:** Request/response transport between the client, the orchestrator and each agent endpoint. (Streaming telemetry over WebSockets is a documented future extension, not implemented.)
 3. **REST APIs + OAuth 2.0 / JWT:** Authentication and communication with user web dashboards and utility OpenADR 3.0 gateways.
 4. **Security Message Envelope:** Every inter-agent message is packaged in a tamper-proof schema:
 
@@ -287,7 +285,7 @@ $$SOC(t+1) = SOC(t) + \left( \eta_{\text{ch}} \cdot P_{\text{bess,ch}}(t) - \fra
 $$\text{Hard Boundary: } 0.20 \le SOC(t) \le 0.90 \quad \forall t$$
 
 ### 6.3 Deterministic Mixed-Integer Linear Programming (MILP) Dispatch Solver
-The optimization problem is solved across $T=48$ half-hour intervals using `PuLP` with `HiGHS / CBC`:
+The optimization problem is solved across $T=48$ half-hour intervals using `PuLP` with the `CBC` solver:
 
 $$\min_{\mathbf{X}} \sum_{t=1}^T \Big( \underbrace{C_{\text{grid}}(t) \cdot P_{\text{grid}}(t) \cdot \Delta t}_{\text{Electricity Import Cost}} + \underbrace{\delta_{\text{deg}} \cdot (P_{\text{bess,ch}}(t) + P_{\text{bess,dis}}(t)) \cdot \Delta t}_{\text{Battery Degradation Penalty}} + \underbrace{\sum_{i \in \mathcal{Z}} \beta_i \cdot |T_i(t) - T_{i,\text{target}}|}_{\text{Comfort Discomfort Penalty}} \Big) + \underbrace{\Pi_{\text{peak}} \cdot P_{\text{peak}}^{\max}}_{\text{15-Min Demand Charge}}$$
 
@@ -308,7 +306,7 @@ $$0 \le P_{\text{grid}}(t) \le P_{\text{contracted\_limit}}, \quad 0.20 \le SOC(
                                   ┌────────────────────┴────────────────────┐
                                   ▼                                         ▼
                      +──────────────────────────+             +──────────────────────────+
-                     | ChromaDB (Dense Vectors) |             | BM25 (Sparse Keywords)   |
+                     | pgvector (Dense Vectors) |             | BM25 (Sparse Keywords)   |
                      | Captures conceptual semantics |        | Captures exact numbers/IDs|
                      +────────────┬─────────────+             +─────────────┬────────────+
                                   │                                         │
@@ -319,24 +317,20 @@ $$0 \le P_{\text{grid}}(t) \le P_{\text{contracted\_limit}}, \quad 0.20 \le SOC(
                                       +────────────────┬────────────────+
                                                        ▼
                                       +─────────────────────────────────+
-                                      | Cross-Encoder Reranker          |
-                                      | (bge-reranker-large)            |
-                                      +────────────────┬────────────────+
-                                                       ▼
                                       +─────────────────────────────────+
                                       | Grounded XAI Synthesis (LLM)    |
                                       +─────────────────────────────────+
 ```
 
 ### 7.1 Hybrid Retrieval Mechanics
-* **Dense Retrieval (ChromaDB):** Embeds documents into a high-dimensional vector space to capture semantic meaning (e.g., matching *"ways to stay cool"* with *"ASHRAE thermal comfort bounds"*).
+* **Dense Retrieval (pgvector):** Embeds documents into a high-dimensional vector space to capture semantic meaning (e.g., matching *"ways to stay cool"* with *"ASHRAE thermal comfort bounds"*).
 * **Sparse Retrieval (BM25Okapi):** Performs exact lexical matching for specific keywords, tariff codes, and numerical rates (e.g., matching `"PUCSL GP-2 Section 4.2"` or `"LKR 58.00"`).
 * **Reciprocal Rank Fusion (RRF):** Merges dense and sparse result sets to produce a unified relevance ranking:
   $$RRF\_Score(d) = \sum_{m \in \{\text{Dense}, \text{Sparse}\}} \frac{1}{k + \text{Rank}_m(d)} \quad (\text{where } k=60)$$
-* **Cross-Encoder Reranking (`bge-reranker-large`):** Scores query-document pairs jointly to select the top-2 most relevant chunks.
+* **Top-k Selection:** RRF ordering selects the top-2 most relevant clauses. (Cross-encoder reranking was evaluated and deferred — RRF over dense+sparse already resolves this corpus.)
 
 ### 7.2 Explicit NLP & Faithfulness Checker
-* **spaCy Custom NER:** Extracts entities including `ROOM_ID`, `DATE_TIME`, `MONETARY_RATE`, and `POWER_KW`.
+* **Explicit NER (planned):** spaCy `en_core_web_sm` plus a rule-based `EntityRuler` extracting `ROOM_ID`, `DATE_TIME`, `MONETARY_RATE` and `POWER_KW`. Rule-based extraction is in place today.
 * **Automated Faithfulness Check:** Every numerical claim in an LLM-generated explanation is parsed and cross-checked against the MILP solver's execution log. If any number differs, the explanation is rejected and regenerated.
 
 ---
@@ -453,129 +447,77 @@ $$\text{Net 3-Year Campus Profit} = (3 \times \text{LKR } 3,200,000) - (3 \times
 
 ### 11.1 Target Codebase File Tree (`IRWA-project/`)
 ```
-IRWA-project/
-├── README.md                               # Comprehensive setup, API documentation, and viva guide
-├── docker-compose.yml                      # Optional container orchestration for backend & frontend
+campusgrid-ai/
+├── pyproject.toml                              # SINGLE source of dependency truth (+ extras)
+├── .env.example                                # Every provider switch, documented
+├── Dockerfile · docker-compose.yml             # Backend image · local pgvector
 │
-├── frontend/                               # REACT 18 SINGLE PAGE APPLICATION (Vite + Tailwind)
-│   ├── package.json                        # Node dependencies (react, lucide-react, recharts, axios)
-│   ├── vite.config.js                      # Vite build configuration and API proxy
-│   ├── tailwind.config.js                  # Tailwind styling & dark-mode theme configuration
-│   ├── index.html                          # Single-page application root entry
-│   └── src/
-│       ├── App.jsx                         # Main dashboard layout, top navigation & sidebar
-│       ├── main.jsx                        # React DOM mounting
-│       ├── components/                     # Reusable UI component library
-│       │   ├── MetricCard.jsx              # Real-time power (kW), battery SOC (%), and cost KPIs
-│       │   ├── PowerDispatchChart.jsx      # Recharts 48-period stacked load/solar/battery graph
-│       │   ├── TemperatureComfortChart.jsx # Indoor vs. ambient 2R2C thermal response curves
-│       │   ├── ChatDrawer.jsx              # Natural language XAI conversational assistant panel
-│       │   ├── WhatIfControlPanel.jsx      # Sliders for occupancy, temperature, and grid shocks
-│       │   └── FunnelAnalyticsChart.jsx    # 4-stage decision acceptance conversion funnel
-│       ├── pages/                          # Dedicated full-page view controllers
-│       │   ├── OverviewDashboard.jsx       # Campus microgrid real-time telemetry console
-│       │   ├── DigitalTwinView.jsx         # What-If physics simulator and thermal twin
-│       │   ├── DispatchOptimization.jsx    # 48-interval MILP schedule and tariff breakdown
-│       │   ├── PolicyKnowledgeBase.jsx     # PUCSL & ASHRAE hybrid RAG citation explorer
-│       │   ├── WebAnalyticsView.jsx        # Query intent clusters, funnels & XAI A/B tests
-│       │   └── SecurityAuditView.jsx       # 60-test Red Team evaluation runner & audit log
-│       ├── services/                       # Client communication layer
-│       │   ├── api.js                      # Axios REST client configured for FastAPI endpoints
-│       │   └── websocket.js                # Reconnecting WebSocket client for live telemetry
-│       └── types/                          # TypeScript / JSDoc interface definitions
+├── src/                                        # ◀── THE APPLICATION (Clean Architecture)
+│   │
+│   ├── domain/                                 # Pure business core — zero vendor imports
+│   │   ├── entities/                           # TelemetryInterval, OptimizationResult, DocumentClause…
+│   │   ├── interfaces/                         # ALL abstract contracts (ports)
+│   │   │   ├── llm.py  embeddings.py  vector_store.py  repositories.py
+│   │   │   ├── cache.py  reranker.py  tool.py  database.py
+│   │   │   ├── forecaster.py                   # Agent 1 contract        (Developer 1)
+│   │   │   ├── thermal_twin.py                 # Agent 2 contracts       (Developer 2)
+│   │   │   ├── policy_extractor.py             # Agent 3 contracts       (Team Lead)
+│   │   │   └── optimizer.py                    # Agent 4 contracts       (Developer 3)
+│   │   └── exceptions/                         # Structured domain exception hierarchy
+│   │
+│   ├── application/
+│   │   ├── container.py                        # DI composition root — LEAD ONLY, request wiring
+│   │   └── services/                           # RetrievalService, AuditService
+│   │
+│   ├── agents/                                 # The 4 agents + central coordinator
+│   │   ├── base/                               # BaseAgent: timing, tracing, error isolation
+│   │   ├── coordinator/                        # Deterministic pipeline + NLP query parser
+│   │   ├── telemetry/                          # AGENT 1 — forecaster            (Developer 1)
+│   │   ├── digital_twin/                       # AGENT 2 — 2R2C thermal, battery (Developer 2)
+│   │   ├── policy_rag/                         # AGENT 3 — hybrid RAG            (Team Lead)
+│   │   └── dispatch_explanation/               # AGENT 4 — MILP, XAI, faithfulness (Developer 3)
+│   │
+│   ├── infrastructure/                         # Swappable adapters — the only vendor-aware code
+│   │   ├── llm/                                # LiteLLM (Gemini/OpenAI/Claude/Groq/Ollama) + mock
+│   │   ├── embeddings/                         # SentenceTransformers + deterministic mock
+│   │   ├── vector_store/                       # pgvector · Chroma · in-memory
+│   │   ├── retrieval/                          # Okapi BM25 + Reciprocal Rank Fusion
+│   │   ├── database/
+│   │   │   ├── session.py                      # SQLAlchemy / Neon engine
+│   │   │   └── repositories/                   # ONE FILE PER ENTITY (prevents merge conflicts)
+│   │   │       ├── room_repository.py          # Team Lead
+│   │   │       ├── audit_log_repository.py     # Team Lead
+│   │   │       ├── timetable_repository.py     # Developer 1
+│   │   │       └── meter_history_repository.py # Developer 1
+│   │   ├── tools/                              # weather_tool (Dev 1) · simulation_tool (Dev 2)
+│   │   ├── reference_baselines/                # Working stand-ins — FROZEN, read-only
+│   │   ├── cache/                              # TTL in-memory cache provider
+│   │   └── observability/                      # Structured tracer, correlation IDs
+│   │
+│   ├── api/                                    # FastAPI gateway
+│   │   ├── main.py                             # App, CORS, exception handlers, lifespan
+│   │   ├── routes/                             # health · orchestrator · telemetry · simulation
+│   │   │                                       # optimizer · rag · analytics · audit
+│   │   ├── middleware/                         # Request tracing, error handling
+│   │   └── dependencies/                       # Container injection
+│   │
+│   ├── config/settings.py                      # All provider switches — LEAD ONLY
+│   ├── prompts/                                # Externalised prompt templates (Team Lead)
+│   ├── pipelines/periodic_retraining/          # Offline model training (Developer 1)
+│   ├── schemas/                                # Public request/response DTOs
+│   └── shared/                                 # Constants, datetime helpers
 │
-├── backend/                                # FASTAPI MODULAR APPLICATION & DOMAIN ENGINES
-│   ├── pyproject.toml                      # Python build configuration and dependencies
-│   ├── requirements.txt                    # Pinned dependencies (fastapi, uvicorn, pulp, chromadb, etc.)
-│   ├── main.py                             # FastAPI bootstrap, CORS middleware & route registration
-│   │
-│   ├── api/                                # HTTP REST & WEBSOCKET ROUTING LAYER
-│   │   ├── __init__.py
-│   │   ├── routers/
-│   │   │   ├── telemetry.py                # Live sub-meter, weather, and PV generation endpoints
-│   │   │   ├── optimization.py             # MILP solve triggers and schedule fetch endpoints
-│   │   │   ├── simulation.py               # 2R2C What-If simulation execution endpoints
-│   │   │   ├── agents.py                   # Chatbot query handling & XAI explanation endpoints
-│   │   │   ├── analytics.py                # Query cluster mining, funnel logging & A/B endpoints
-│   │   │   └── ws_stream.py                # JSON-RPC 2.0 WebSocket telemetry broadcaster
-│   │   └── dependencies.py                 # Dependency injection (DB sessions, agent singletons)
-│   │
-│   ├── core/                               # CORE FOUNDATION & IMMUTABLE DATA CONTRACTS
-│   │   ├── __init__.py
-│   │   ├── config.py                       # Global environment variables and comfort constants
-│   │   ├── database.py                     # SQLite engine via SQLModel with connection pooling
-│   │   └── contracts/                      # Pydantic v2 schemas (Shared DTOs & MCP Tools)
-│   │       ├── agent_messages.py           # Standardized inter-agent envelope schema
-│   │       ├── telemetry.py                # Power, temperature, and occupancy data models
-│   │       ├── optimization.py             # Dispatch setpoints, cost models, and battery status
-│   │       ├── rag_models.py               # Chunks, queries, fusion rankings, and citations
-│   │       └── analytics_models.py         # Query log entries, funnel steps, and A/B variants
-│   │
-│   ├── agents/                             # MULTI-AGENT DOMAIN (Member 1 Lead)
-│   │   ├── __init__.py
-│   │   ├── state.py                        # LangGraph AgentState typed graph schema
-│   │   ├── graph_builder.py                # LangGraph workflow compilation & edges
-│   │   ├── facility_agent.py               # LLM orchestrator node (Gemini / LiteLLM)
-│   │   ├── nlp_parser.py                   # spaCy custom NER pipeline for intent extraction
-│   │   └── xai_synthesizer.py              # Faithfulness-checked plain-English XAI generator
-│   │
-│   ├── digital_twin/                       # PHYSICS & ML DOMAIN (Member 3 Lead)
-│   │   ├── __init__.py
-│   │   ├── thermal_model.py                # 2R2C grey-box continuous differential equation solver
-│   │   ├── battery_model.py                # Electrochemical SOC & kinetic degradation dynamics
-│   │   ├── what_if_engine.py               # Environmental & occupancy perturbation runner
-│   │   ├── demand_forecaster.py            # 24-hour predictive load regression (LightGBM)
-│   │   └── data_replay_adapter.py          # ASHRAE BDG2 dataset streaming generator
-│   │
-│   ├── optimizer/                          # DETERMINISTIC DISPATCH DOMAIN (Member 4 Lead)
-│   │   ├── __init__.py
-│   │   ├── milp_solver.py                  # 48-period PuLP / HiGHS optimization formulation
-│   │   ├── tariff_engine.py                # PUCSL GP-2 / I-2 Time-of-Use pricing calculations
-│   │   ├── priority_load_shedder.py        # Tier-0, Tier-1, Tier-2 load curtailment logic
-│   │   └── constraint_validator.py         # Post-solve sanity and boundary verification
-│   │
-│   ├── rag/                                # INFORMATION RETRIEVAL DOMAIN (Member 2 Lead)
-│   │   ├── __init__.py
-│   │   ├── document_preprocessor.py        # PDF parser, text normalizer & AST sanitizer
-│   │   ├── chunker.py                      # Semantic token chunker (500 tokens / 10% overlap)
-│   │   ├── vector_store.py                 # ChromaDB persistent collection manager
-│   │   ├── sparse_bm25.py                  # Rank-BM25 token index and scoring engine
-│   │   ├── fusion_reranker.py              # Reciprocal Rank Fusion (RRF) & Cross-Encoder
-│   │   └── corpus/                         # Authoritative source documents (PUCSL & ASHRAE)
-│   │
-│   ├── analytics/                          # WEB ANALYTICS DOMAIN (Member 1 Lead)
-│   │   ├── __init__.py
-│   │   ├── telemetry_logger.py             # SQLite audit logging for user interactions
-│   │   ├── query_miner.py                  # TF-IDF vectorizer & K-Means intent clustering
-│   │   ├── funnel_engine.py                # 4-stage operator decision funnel tracking
-│   │   └── ab_framework.py                 # Explanation variant assigner & statistical tester
-│   │
-│   ├── services/                           # SAFETY & SERVICE ORCHESTRATION LAYER
-│   │   ├── __init__.py
-│   │   ├── orchestrator.py                 # Service coordinator bridging API and agents
-│   │   └── safety_guardrails.py            # Middleware for hard bounds & faithfulness checks
-│   │
-│   └── data/                               # DATA STORAGE & SEEDS
-│       ├── seeds/
-│       │   ├── sample_campus_seed.csv      # 24-hour realistic baseline load & solar profiles
-│       │   └── seed_generator.py           # Synthetic seed generator script
-│       └── storage/
-│           ├── campusgrid.db               # Persistent SQLite relational database file
-│           └── chroma_db/                  # Persistent ChromaDB vector collections
+├── backend/                                    # Compatibility shims → re-export from src/
+│   └── data/
+│       ├── init.sql                            # PostgreSQL DDL + pgvector schema
+│       └── seeds/sample_campus_seed.csv        # 48-interval benchmark dataset
 │
-└── tests/                                  # VERIFICATION & AUDIT HARNESSES
-    ├── unit/                               # Automated unit test suite
-    │   ├── test_thermal_physics.py
-    │   ├── test_milp_solver.py
-    │   ├── test_hybrid_rag.py
-    │   └── test_spacy_ner.py
-    └── red_team_security_audits/           # 60-TEST COURSEWORK AUDIT HARNESS
-        ├── __init__.py
-        ├── audit_runner.py                 # CLI test runner generating evaluation reports
-        ├── student_1_prompt_injection/     # Student 1: 15 Prompt Injection Test Cases
-        ├── student_2_privacy_leakage/      # Student 2: 15 Privacy & Noise Test Cases
-        ├── student_3_bias_and_xai/         # Student 3: 15 Responsible AI & Bias Test Cases
-        └── student_4_ir_and_infrastructure/# Student 4: 15 RAG & Network Test Cases
+├── frontend/                                   # React 18 + Vite SPA (Team Lead)
+├── docs/                                       # Coursework specifications & SRS
+├── TEAM_GUIDES/                                # Role briefs + authoritative OWNERSHIP.md
+└── tests/
+    ├── unit/  integration/                     # 45 tests
+    └── red_team_security_audits/               # 4 × 15-case individual audits
 ```
 
 ---
@@ -640,7 +582,7 @@ from rank_bm25 import BM25Okapi
 
 class TariffHybridRAG:
     """
-    Hybrid Dense (ChromaDB) + Sparse (BM25) Information Retrieval Engine.
+    Hybrid Dense (pgvector) + Sparse (BM25) Information Retrieval Engine.
     """
     def __init__(self):
         self.chroma_client = chromadb.Client()
@@ -720,6 +662,12 @@ class WebAnalyticsEngine:
 # 12. 4-Member Task Distribution, Sprint Roadmap & Live Demo Script
 
 ### 12.1 4-Member Team Ownership & Role Matrix
+
+> **Note for developers:** this matrix is an early draft and assigns roles differently from
+> both `docs/CAMPUSGRID_AI_SIMPLIFIED_SRS_AND_SYSTEM_GUIDE.md` (View 7) and the team's agreed
+> split. It is retained as-submitted for the coursework record.
+> **For actual file ownership, use [`TEAM_GUIDES/OWNERSHIP.md`](../TEAM_GUIDES/OWNERSHIP.md)**,
+> which is the authoritative source and wins wherever they disagree.
 ```
 +──────────────────────────────────────────────────────────────────────────────────────────────────+
 |                                      4-MEMBER TEAM MATRIX                                        |
@@ -727,15 +675,15 @@ class WebAnalyticsEngine:
 | Member   | Core Engineering Ownership & Module Lead                                              |
 +──────────┼───────────────────────────────────────────────────────────────────────────────────────+
 | Member 1 | Principal Agentic Architect & Lead                                                    |
-| (Team    | - Central LangGraph Multi-Agent DAG Orchestrator & State Machine                      |
-|  Lead)   | - Facility Interface Agent (LLM + spaCy NER)                                          |
+| (Team    | - Central Deterministic Multi-Agent Orchestrator & Intent Router                      |
+|  Lead)   | - Facility Interface Agent (LLM + NER)                                                |
 |          | - Web Analytics Engine & XAI A/B Testing Suite                                        |
 |          | - Explainable AI (XAI) Synthesis & Grounded Justifications                           |
 |          | - End-to-End System Integration, React SPA Frontend & FastAPI Gateway                |
 +──────────┼───────────────────────────────────────────────────────────────────────────────────────+
 | Member 2 | Knowledge & Information Retrieval Lead                                                |
-|          | - Hybrid RAG Engine (ChromaDB Dense + BM25 Sparse)                                    |
-|          | - Reciprocal Rank Fusion (RRF) & Cross-Encoder Reranker (`bge-reranker-large`)        |
+|          | - Hybrid RAG Engine (pgvector Dense + BM25 Sparse)                                    |
+|          | - Reciprocal Rank Fusion (RRF) ranking                                                |
 |          | - PDF Ingestion & Semantic Document Chunker                                           |
 |          | - RAG Click-Through Relevance Telemetry                                               |
 +──────────┼───────────────────────────────────────────────────────────────────────────────────────+
@@ -747,7 +695,7 @@ class WebAnalyticsEngine:
 +──────────┼───────────────────────────────────────────────────────────────────────────────────────+
 | Member 4 | Mathematical Optimization & Dispatch Lead                                             |
 |          | - Mixed-Integer Linear Program (MILP) Solver Architecture                             |
-|          | - PuLP / HiGHS Multi-Period 48-Interval Cost & Peak Shaving Solver                    |
+|          | - PuLP / CBC Multi-Period 48-Interval Cost & Peak Shaving Solver                      |
 |          | - Priority-Tier Load Shedding Guardrail Engine (Tier-0 to Tier-2)                     |
 |          | - Automated XAI Faithfulness Verification Checker                                     |
 +──────────┴───────────────────────────────────────────────────────────────────────────────────────+
@@ -774,8 +722,8 @@ class WebAnalyticsEngine:
 | Slide 1 | Project Title & Team Introduction          | Member 1 (Lead) | CampusGrid AI: Multi-Agent Microgrid EMS.    |
 | Slide 2 | The 15-Minute Peak Demand Penalty Problem  | Member 1        | Show 30%-50% bill spike from 15-min peak.   |
 | Slide 3 | 4-Agent Topology & System Architecture     | Member 4        | Show decoupled multi-agent topology diagram. |
-| Slide 4 | Inter-Agent Protocols & Safety Decoupling  | Member 4        | MCP tool calling, WebSockets, no LLM math.  |
-| Slide 5 | Information Retrieval & Hybrid RAG Engine  | Member 2        | ChromaDB + BM25 + Cross-Encoder reranking.  |
+| Slide 4 | Inter-Agent Protocols & Safety Decoupling  | Member 4        | MCP tool calling, REST, no LLM math.        |
+| Slide 5 | Information Retrieval & Hybrid RAG Engine  | Member 2        | pgvector + BM25 + RRF fusion ranking.       |
 | Slide 6 | Digital Twin & 2R2C Grey-Box Physics       | Member 3        | 2R2C differential equations & what-if twin.  |
 | Slide 7 | LIVE SYSTEM PROGRESS DEMONSTRATION         | All Members     | Switch to live browser demo (Chat + Funnels).|
 | Slide 8 | Web Analytics Suite & Telemetry Mining     | Member 1 (Lead) | Show query clusters, funnels & A/B testing.  |
@@ -813,7 +761,7 @@ class WebAnalyticsEngine:
 > **Answer:** "REST APIs provide standard client-to-server communication for the web UI. Model Context Protocol (MCP) provides a standardized, typed interface for the LLM agent to invoke backend tools. A2A (Agent-to-Agent) is an open standard we can adopt for future expansion across multi-vendor campus networks."
 
 ### Q9: Why use Hybrid RAG instead of pure Dense Vector search?
-> **Answer:** "Pure dense vector embeddings frequently fail to match exact alphanumeric strings, such as specific clause numbers (`PUCSL GP-2 Section 4.2`) or exact tariff rates (`LKR 58.00/kWh`). Combining ChromaDB dense embeddings with BM25 sparse keyword matching and Reciprocal Rank Fusion ensures both conceptual understanding and exact keyword precision."
+> **Answer:** "Pure dense vector embeddings frequently fail to match exact alphanumeric strings, such as specific clause numbers (`PUCSL GP-2 Section 4.2`) or exact tariff rates (`LKR 58.00/kWh`). Combining pgvector dense embeddings with BM25 sparse keyword matching and Reciprocal Rank Fusion ensures both conceptual understanding and exact keyword precision."
 
 ### Q10: How does the system handle high-voltage electrical safety?
 > **Answer:** "All physical actuator commands are generated strictly by the MILP solver and pass through a deterministic middleware boundary that locks battery SOC between 20%–90% and indoor temperatures between 21.0°C–25.5°C. The LLM has zero direct write access to any hardware control registers."
@@ -827,17 +775,17 @@ class WebAnalyticsEngine:
 ### Q13: What happens during an unpredicted campus-wide heatwave?
 > **Answer:** "The 2R2C Digital Twin calculates the accelerated heat transfer rate through the building envelope and prompts the optimizer to initiate early-morning HVAC precooling at 5:00 AM when power is cheap, flattening the afternoon demand spike."
 
-### Q14: What is the role of spaCy Named Entity Recognition in your LLM agent?
-> **Answer:** "spaCy parses user prompts deterministically before LLM reasoning, extracting structured operational entities such as room numbers, timestamps, temperature values, and tariff schedules."
+### Q14: What is the role of Named Entity Recognition in your LLM agent?
+> **Answer:** "NER parses user prompts deterministically before LLM reasoning, extracting structured operational entities such as room numbers, timestamps, temperature values, and tariff schedules."
 
 ### Q15: How do you prevent algorithmic bias across different campus facilities?
 > **Answer:** "We implement proportional load-shedding fairness equations within the MILP objective function, ensuring that comfort degradation ($\pm 1.5^\circ\text{C}$) is distributed equitably across all non-critical Tier-1 facilities rather than disproportionately affecting student housing."
 
 ### Q16: Why is React used for the front-end dashboard instead of Streamlit?
-> **Answer:** "Streamlit re-executes its entire script top-to-bottom on every user interaction or slider change, which freezes the interface during heavy MILP optimization runs and disrupts real-time WebSocket telemetry. By implementing a decoupled React 18 Single Page Application (SPA) with Vite, Tailwind CSS, and Recharts, backed by a high-performance FastAPI asynchronous gateway, we achieve sub-50ms UI responsiveness, true component-level reactive re-rendering, persistent client-side state, and dedicated WebSocket streams for live microgrid power curves."
+> **Answer:** "Streamlit re-executes its entire script top-to-bottom on every user interaction or slider change, which freezes the interface during heavy MILP optimization runs. By implementing a decoupled React 18 Single Page Application (SPA) with Vite, Tailwind CSS, and Recharts, backed by a FastAPI asynchronous gateway, we achieve responsive UI updates, true component-level reactive re-rendering, and persistent client-side state while a long optimization runs."
 
 ### Q17: What makes your system truly 'Agentic' rather than just a script?
 > **Answer:** "CampusGrid AI agents exhibit autonomous goal-driven behavior: the Facility Interface Agent reasons about user intent, dynamically constructs an execution plan, invokes specialized retrieval and optimization tools via MCP, evaluates the solver results against safety constraints, and synthesizes grounded explanations without hardcoded procedural logic."
 
 ### Q18: Which parts of the coursework syllabus does this project satisfy?
-> **Answer:** "It satisfies 100% of the syllabus criteria: $\ge 2$ intelligent interacting agents, LLM integration, explicit NLP (spaCy NER), Information Retrieval (Hybrid RAG: ChromaDB + BM25), Web Analytics (Query clustering, acceptance funnels, A/B testing), Security (mTLS, JWT, RBAC, input sanitization), Responsible AI (Fairness, privacy, XAI faithfulness), and Sri Lankan commercialization."
+> **Answer:** "It satisfies the syllabus criteria: 4 intelligent interacting agents (the brief requires $\ge 2$), LLM integration for intent, explanation and faithfulness checking, explicit NLP (NER and summarisation), Information Retrieval (Hybrid RAG: pgvector dense + BM25 sparse + Reciprocal Rank Fusion), Web Analytics (query clustering, acceptance funnel, A/B testing), Security (JWT, RBAC, input sanitisation), defined agent communication protocols (REST per agent, MCP for tool calls), Responsible AI (tiered fairness, differential privacy, XAI faithfulness verification), and a Sri Lankan commercialization plan in LKR."

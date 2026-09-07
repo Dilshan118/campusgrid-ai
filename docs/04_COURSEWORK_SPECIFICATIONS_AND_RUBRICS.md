@@ -42,7 +42,7 @@
 ### Core Mandatory Requirements:
 1. **Selected Real-World Domain:** Energy Management System & Smart Campus Microgrid.
 2. **Multi-Agent Architecture:** At least two (2) interacting intelligent agents exhibiting autonomous goal-driven behavior.
-3. **Core Technologies:** One or more LLMs, named NLP techniques (spaCy NER, summarization), Information Retrieval module (Hybrid RAG: ChromaDB + BM25), Web Analytics module (Query clustering, acceptance funnel, A/B testing), Security features (JWT, sanitization, mTLS), and defined communication protocols (MCP, WebSockets).
+3. **Core Technologies:** One or more LLMs, named NLP techniques (spaCy NER, summarization), Information Retrieval module (Hybrid RAG: pgvector dense + BM25 sparse + RRF), Web Analytics module (Query clustering, acceptance funnel, A/B testing), Security features (JWT, sanitization, mTLS), and defined communication protocols (MCP, WebSockets).
 4. **Responsible AI:** Proportional fairness, explainability (XAI), transparency, differential privacy ($\epsilon=1.0$), and automated faithfulness checking.
 5. **Commercialization Plan:** Realistic pricing model in Sri Lankan Rupees (LKR) with target market analysis and payback period calculations.
 
@@ -91,7 +91,7 @@ Every student must execute and document **at least 15 independent test cases** u
 |  STUDENT 4: Information Retrieval and Security Assessment                             |
 |  - RAG Document Index Poisoning               - Vector Embedding Cluster Manipulation |
 |  - Unencrypted MCP Interception (mTLS)        - OpenADR Payload Tampering             |
-|  - ChromaDB Vector Store Denial of Service    - BACnet/IP Packet Spoofing & Replays   |
+|  - Vector Store Denial of Service             - Tool Parameter Spoofing & Replays     |
 +───────────────────────────────────────────────────────────────────────────────────────+
 ```
 
@@ -140,5 +140,5 @@ Every student must execute and document **at least 15 independent test cases** u
 1. **Role Separation:** The LLM only parses intent and explains results. The MILP solver calculates all setpoints. **No LLM may ever write to physical switches or actuator registers directly.**
 2. **Deterministic Safety Guardrails:** Hard limits enforced in middleware:
    $$21.0^\circ\text{C} \le T_{\text{setpoint}} \le 25.5^\circ\text{C}, \quad 20\% \le SOC_{\text{bess}} \le 90\%$$
-3. **Protocol Standards:** Inter-agent tool calls must adhere to **Model Context Protocol (MCP)** schemas; real-time telemetry streaming must use **JSON-RPC 2.0 over Secure WebSockets (WSS)**.
+3. **Protocol Standards:** Agent-to-tool calls must adhere to **Model Context Protocol (MCP)** schemas. Client-to-orchestrator and orchestrator-to-agent traffic uses **REST + JSON over HTTPS**, with each agent exposed on its own endpoint.
 4. **Automated Faithfulness Check:** Every numerical claim in an LLM-generated explanation must match the solver execution log or a retrieved RAG citation; otherwise, it is rejected.

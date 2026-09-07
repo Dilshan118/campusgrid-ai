@@ -80,9 +80,9 @@ The architecture adheres 100% to the official system specification: **Four speci
 │                                           ▼                                                      │
 │                                                                                                  │
 │   [ ORCHESTRATOR ]                                                                               │
-│   Python / LangGraph Directed Acyclic Graph (DAG)                                                │
+│   Deterministic sequential Python pipeline with typed hand-offs                                  │
 │   - NLP converts user query into structured fields: action, date, building, room, target         │
-│   - LLM plans which agents to call and in what order; handles task routing, sequencing, state    │
+│   - Routes to the agents the intent requires; handles sequencing and shared state                │
 │   - Receives schedule and explanation back from Agent 4 and returns grounded answer to client    │
 │                                                                                                  │
 │             │                                 │ REST call to each agent   │                      │
@@ -161,11 +161,14 @@ The core intelligence is structured into four distinct agent competencies plus t
 
 ---
 
-### 1. Central Orchestrator (Python / LangGraph)
+### 1. Central Orchestrator (Deterministic Python Pipeline)
 * **Core Competency:** Conversational routing and workflow state management.
 * **Responsibilities:**
-  * Uses explicit NLP (spaCy NER) to parse user inputs into structured parameter fields (`action`, `date`, `building`, `room`, `target_temp`).
-  * LLM state graph plans which agents to call and in what order.
+  * Uses explicit NLP to parse user inputs into structured parameter fields (`action`, `date`, `building`, `room`, `target_temp`).
+    Rule-based today; **spaCy `en_core_web_sm` NER is planned.**
+  * Routes to the agents a given intent requires, in a fixed, auditable order.
+    **LLM-driven intent routing is planned.** A graph framework (LangGraph) was evaluated and
+    deliberately not adopted: the pipeline has no cycles and no conditional graph state.
   * Receives the final schedule and plain-language explanation from Agent 4 and returns the grounded answer to the client dashboard.
 
 ---
@@ -176,7 +179,7 @@ The core intelligence is structured into four distinct agent competencies plus t
   * Reads meter logs, room capacities, course schedules, and occupancy records from **PostgreSQL**.
   * Pulls external hourly weather forecast data for campus coordinates (cached with local persistence fallback).
   * Forecasts day-ahead electricity demand (kW) and rooftop solar PV generation.
-  * Flags abnormal consumption against the expected historical baseline (Isolation Forest).
+  * Flags abnormal consumption against the expected historical baseline (threshold-based today; **Isolation Forest planned**).
   * Emits demand and PV profiles with calibrated confidence bands.
 * **Strict Operational Boundary:** **Predicts only — it does NOT choose an action or schedule.**
 
@@ -209,7 +212,7 @@ The core intelligence is structured into four distinct agent competencies plus t
 * **Core Competency:** Mathematical cost minimization and plain-language justification.
 * **Responsibilities:**
   * Combines the load forecast (from Agent 1), the physical feasibility envelope (from Agent 2), and the regulatory constraints (from Agent 3).
-  * Formulates and solves a 48-period Mixed-Integer Linear Program (MILP) using `PuLP` and the `HiGHS` solver engine.
+  * Formulates and solves a 48-period Mixed-Integer Linear Program (MILP) using `PuLP` with the `CBC` solver engine.
   * Eliminates the 15-minute peak demand penalty through battery peak-shaving and smart chiller pre-cooling.
   * Identifies which physical or financial constraints are binding on the chosen schedule.
   * Synthesizes a plain-English Explainable AI (XAI) justification grounded strictly in solver logs and retrieved citations.
@@ -231,11 +234,11 @@ Every technology choice is aligned with the official system specification to del
 │ Access & Security Layer  │ FastAPI + PyJWT             │ TLS/HTTPS encryption, OAuth 2.0 / JWT   │
 │                          │ Pydantic v2 Validators      │ auth, RBAC authorization, AST sanitize  │
 +──────────────────────────┼─────────────────────────────┼─────────────────────────────────────────+
-│ Orchestration Layer      │ LangGraph (Python)          │ Deterministic state graph managing task │
-│                          │ spaCy (`en_core_web_sm`)    │ routing, agent sequencing & NLP fields  │
+│ Orchestration Layer      │ Sequential Python pipeline  │ Deterministic agent sequencing with     │
+│                          │ spaCy en_core_web_sm (plan) │ typed hand-offs; NLP field extraction   │
 +──────────────────────────┼─────────────────────────────┼─────────────────────────────────────────+
 │ Relational Database      │ PostgreSQL 16               │ Stores structured campus data: rooms,   │
-│                          │ (via SQLModel / asyncpg)    │ timetables, buildings, meter history    │
+│                          │ (via SQLModel / psycopg2)   │ timetables, buildings, meter history    │
 +──────────────────────────┼─────────────────────────────┼─────────────────────────────────────────+
 │ Vector Search Database   │ pgvector Extension          │ Runs inside PostgreSQL: vector search   │
 │                          │ (sentence-transformers)     │ over tariff & policy document clauses   │
@@ -243,8 +246,8 @@ Every technology choice is aligned with the official system specification to del
 │ Simulation Platform      │ Python 2R2C Grey-Box Twin   │ Continuous differential equation solver │
 │                          │ FastMCP Protocol Adapter    │ reached via Model Context Protocol (MCP)│
 +──────────────────────────┼─────────────────────────────┼─────────────────────────────────────────+
-│ Optimization Solver      │ PuLP with HiGHS Solver      │ High-speed open-source MILP solver;     │
-│                          │                             │ solves 48-interval problem in <200ms    │
+│ Optimization Solver      │ PuLP with CBC Solver        │ Open-source MILP solver; solves the     │
+│                          │                             │ 48-interval problem in well under 1s    │
 +──────────────────────────┼─────────────────────────────┼─────────────────────────────────────────+
 │ External LLM API         │ Google Gemini / LiteLLM     │ High-speed structured reasoning; never  │
 │                          │                             │ receives raw high-frequency meter data  │
@@ -352,82 +355,88 @@ The system architecture specifies two dedicated offline background pipelines tha
 To prevent developer collisions during Git pull requests, the codebase is partitioned into distinct module boundaries matching the official architecture:
 
 ```
-IRWA-project/
-├── docker-compose.yml                          # PostgreSQL 16 + pgvector container definition
-├── README.md                                   # Quickstart, setup instructions, and architecture guide
+campusgrid-ai/
+├── pyproject.toml                              # SINGLE source of dependency truth (+ extras)
+├── .env.example                                # Every provider switch, documented
+├── Dockerfile · docker-compose.yml             # Backend image · local pgvector
 │
-├── frontend/                                   # CLIENT APPLICATION (React 18 SPA)
-│   ├── package.json                            # Vite, Tailwind, Recharts, Lucide React, Axios
-│   ├── vite.config.js                          # Reverse-proxy to FastAPI backend
-│   └── src/
-│       ├── App.jsx                             # Primary layout, sidebar navigation, top header
-│       ├── components/                         # Metric cards, power dispatch charts, chat drawer
-│       ├── pages/                              # Overview, Twin, Optimizer, RAG, Analytics, Audit
-│       └── services/                           # Axios REST client and WebSocket connector
+├── src/                                        # ◀── THE APPLICATION (Clean Architecture)
+│   │
+│   ├── domain/                                 # Pure business core — zero vendor imports
+│   │   ├── entities/                           # TelemetryInterval, OptimizationResult, DocumentClause…
+│   │   ├── interfaces/                         # ALL abstract contracts (ports)
+│   │   │   ├── llm.py  embeddings.py  vector_store.py  repositories.py
+│   │   │   ├── cache.py  reranker.py  tool.py  database.py
+│   │   │   ├── forecaster.py                   # Agent 1 contract        (Developer 1)
+│   │   │   ├── thermal_twin.py                 # Agent 2 contracts       (Developer 2)
+│   │   │   ├── policy_extractor.py             # Agent 3 contracts       (Team Lead)
+│   │   │   └── optimizer.py                    # Agent 4 contracts       (Developer 3)
+│   │   └── exceptions/                         # Structured domain exception hierarchy
+│   │
+│   ├── application/
+│   │   ├── container.py                        # DI composition root — LEAD ONLY, request wiring
+│   │   └── services/                           # RetrievalService, AuditService
+│   │
+│   ├── agents/                                 # The 4 agents + central coordinator
+│   │   ├── base/                               # BaseAgent: timing, tracing, error isolation
+│   │   ├── coordinator/                        # Deterministic pipeline + NLP query parser
+│   │   ├── telemetry/                          # AGENT 1 — forecaster            (Developer 1)
+│   │   ├── digital_twin/                       # AGENT 2 — 2R2C thermal, battery (Developer 2)
+│   │   ├── policy_rag/                         # AGENT 3 — hybrid RAG            (Team Lead)
+│   │   └── dispatch_explanation/               # AGENT 4 — MILP, XAI, faithfulness (Developer 3)
+│   │
+│   ├── infrastructure/                         # Swappable adapters — the only vendor-aware code
+│   │   ├── llm/                                # LiteLLM (Gemini/OpenAI/Claude/Groq/Ollama) + mock
+│   │   ├── embeddings/                         # SentenceTransformers + deterministic mock
+│   │   ├── vector_store/                       # pgvector · Chroma · in-memory
+│   │   ├── retrieval/                          # Okapi BM25 + Reciprocal Rank Fusion
+│   │   ├── database/
+│   │   │   ├── session.py                      # SQLAlchemy / Neon engine
+│   │   │   └── repositories/                   # ONE FILE PER ENTITY (prevents merge conflicts)
+│   │   │       ├── room_repository.py          # Team Lead
+│   │   │       ├── audit_log_repository.py     # Team Lead
+│   │   │       ├── timetable_repository.py     # Developer 1
+│   │   │       └── meter_history_repository.py # Developer 1
+│   │   ├── tools/                              # weather_tool (Dev 1) · simulation_tool (Dev 2)
+│   │   ├── reference_baselines/                # Working stand-ins — FROZEN, read-only
+│   │   ├── cache/                              # TTL in-memory cache provider
+│   │   └── observability/                      # Structured tracer, correlation IDs
+│   │
+│   ├── api/                                    # FastAPI gateway
+│   │   ├── main.py                             # App, CORS, exception handlers, lifespan
+│   │   ├── routes/                             # health · orchestrator · telemetry · simulation
+│   │   │                                       # optimizer · rag · analytics · audit
+│   │   ├── middleware/                         # Request tracing, error handling
+│   │   └── dependencies/                       # Container injection
+│   │
+│   ├── config/settings.py                      # All provider switches — LEAD ONLY
+│   ├── prompts/                                # Externalised prompt templates (Team Lead)
+│   ├── pipelines/periodic_retraining/          # Offline model training (Developer 1)
+│   ├── schemas/                                # Public request/response DTOs
+│   └── shared/                                 # Constants, datetime helpers
 │
-├── backend/                                    # BACKEND APPLICATION & MULTI-AGENT ENGINES
-│   ├── main.py                                 # FastAPI application entry point & CORS
-│   ├── requirements.txt                        # Pinned dependencies (FastAPI, PuLP, pgvector, etc.)
-│   ├── pyproject.toml                          # Python build and package configuration
-│   │
-│   ├── security/                               # ACCESS AND SECURITY LAYER
-│   │   ├── auth.py                             # JWT token validation and RBAC authorization
-│   │   ├── tls_config.py                       # HTTPS configuration and signature checks
-│   │   └── audit_store.py                      # Append-only audit logger writing to PostgreSQL
-│   │
-│   ├── orchestrator/                           # CENTRAL ORCHESTRATOR (Python / LangGraph)
-│   │   ├── state_graph.py                      # LangGraph DAG definition and agent sequencing
-│   │   ├── nlp_extractor.py                    # spaCy entity extractor (action, room, target)
-│   │   └── response_formatter.py               # Grounded answer synthesis and client dispatch
-│   │
-│   ├── agents/                                 # THE 4 SPECIALIZED AGENTS
-│   │   ├── agent1_telemetry_forecasting/       # AGENT 1 (ML · data)
-│   │   │   ├── meter_reader.py                 # PostgreSQL meter and timetable reader
-│   │   │   ├── weather_client.py               # External cached weather API client
-│   │   │   ├── load_forecaster.py              # 24-hour demand ML model (LightGBM)
-│   │   │   └── anomaly_detector.py             # Isolation Forest power spike detector
-│   │   │
-│   │   ├── agent2_digital_twin/                # AGENT 2 (physics · simulation)
-│   │   │   ├── thermal_model.py                # 2R2C building thermal physics equations
-│   │   │   ├── battery_dynamics.py             # BESS electrochemical SOC & degradation wear
-│   │   │   ├── what_if_runner.py               # Environmental and occupancy perturbation sim
-│   │   │   └── mcp_tool_adapter.py             # Model Context Protocol (MCP) tool interface
-│   │   │
-│   │   ├── agent3_policy_rag/                  # AGENT 3 (IR · NLP · RAG)
-│   │   │   ├── pgvector_search.py              # Dense vector similarity search in PostgreSQL
-│   │   │   ├── sparse_bm25.py                  # Rank-BM25 keyword search engine
-│   │   │   ├── reciprocal_fusion.py            # Reciprocal Rank Fusion (RRF) & Cross-Encoder
-│   │   │   └── ner_rule_extractor.py           # Extracts tariff rates, kVA limits & time blocks
-│   │   │
-│   │   └── agent4_dispatch_explanation/        # AGENT 4 (LLM · optimization)
-│   │       ├── milp_optimizer.py               # PuLP 48-period cost and peak shaving solver
-│   │       ├── constraint_analyzer.py          # Identifies binding physical and cost constraints
-│   │       ├── xai_explainer.py                # Plain-English justification builder
-│   │       └── faithfulness_verifier.py        # Validates LLM claims against solver output
-│   │
-│   ├── pipelines/                              # OFFLINE PIPELINES
-│   │   ├── document_ingestion/                 # PDF extraction, clause chunking, pgvector loader
-│   │   └── periodic_retraining/                # Historical archive model refitting scripts
-│   │
-│   ├── core/contracts/                         # SHARED IMMUTABLE DATA SCHEMAS (Pydantic v2)
-│   │   ├── telemetry.py                        # Power, temperature, and occupancy schemas
-│   │   ├── optimization.py                     # Solver inputs, dispatch schedules, savings
-│   │   ├── rag_models.py                       # Chunk schemas, citations, confidence scores
-│   │   └── analytics_models.py                 # Query logs, funnel steps, A/B testing
-│   │
+├── backend/                                    # Compatibility shims → re-export from src/
 │   └── data/
-│       ├── init.sql                            # Database DDL: pgvector extension & campus tables
-│       └── seeds/
-│           └── sample_campus_seed.csv          # 48-interval benchmark dataset
+│       ├── init.sql                            # PostgreSQL DDL + pgvector schema
+│       └── seeds/sample_campus_seed.csv        # 48-interval benchmark dataset
 │
+├── frontend/                                   # React 18 + Vite SPA (Team Lead)
+├── docs/                                       # Coursework specifications & SRS
+├── TEAM_GUIDES/                                # Role briefs + authoritative OWNERSHIP.md
 └── tests/
-    ├── unit/                                   # Unit tests for physics, solver, and RAG
-    └── red_team_security_audits/               # 60-Test Security Audit Harness (Students 1 to 4)
+    ├── unit/  integration/                     # 45 tests
+    └── red_team_security_audits/               # 4 × 15-case individual audits
 ```
 
 ---
 
 # View 7: Team Delegation & 60-Test Security Audit Matrix
+
+> **Note for developers:** the delegation table below is an early draft that predates the
+> `src/` Clean Architecture refactor, and it references `backend/` paths that are now
+> compatibility shims. It is retained here as-submitted for the coursework record.
+> **For actual file ownership, use [`TEAM_GUIDES/OWNERSHIP.md`](../TEAM_GUIDES/OWNERSHIP.md)**,
+> which is the authoritative source and wins wherever the two disagree.
 
 Each of the four development team members owns a distinct, un-conflicted operational slice, with the Team Lead taking on the interface, orchestration, and retrieval modules, and the other three members leading the specialized engineering domains:
 
@@ -467,7 +476,7 @@ Each of the four development team members owns a distinct, un-conflicted operati
 ```
 
 ### Individual 80-Mark Security Audit Responsibilities:
-* **Student 1 (Member 1 / You):** Probes the Client Dashboard and LangGraph Orchestrator for direct prompt injection, system prompt extraction, roleplay jailbreaks, delimiter collisions, and multilingual token smuggling.
+* **Student 1 (Member 1 / You):** Probes the Client Dashboard and Central Orchestrator for direct prompt injection, system prompt extraction, roleplay jailbreaks, delimiter collisions, and multilingual token smuggling.
 * **Student 2 (Member 2 / Teammate A):** Evaluates Agent 1 and Neon PostgreSQL meter data for Non-Intrusive Load Monitoring (NILM) disaggregation, student schedule reconstruction, and verifies calibrated differential privacy noise ($\epsilon=1.0$).
 * **Student 3 (Member 4 / Teammate C):** Evaluates Agent 4 for systematic load-shedding bias between student dorms and faculty offices, tariff rate hallucination, screen-reader accessibility, and automated XAI faithfulness checks.
 * **Student 4 (Member 3 / Teammate B):** Tests Agent 2's simulation runtime, unencrypted MCP tool interception, BACnet/IP packet spoofing, and vector store denial-of-service resilience.
