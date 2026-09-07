@@ -21,13 +21,11 @@ from src.infrastructure.embeddings.factory import EmbeddingProviderFactory
 from src.infrastructure.vector_store.factory import VectorStoreFactory
 from src.infrastructure.cache.factory import CacheProviderFactory
 from src.infrastructure.database.session import SQLDatabaseSessionManager
-from src.infrastructure.database.repositories.in_memory_repositories import (
+from src.infrastructure.database.repositories import (
     InMemoryRoomRepository,
     InMemoryTimetableRepository,
     InMemoryMeterHistoryRepository,
     InMemoryAuditLogRepository,
-)
-from src.infrastructure.database.repositories.postgres_repositories import (
     PostgresRoomRepository,
     PostgresAuditLogRepository,
 )

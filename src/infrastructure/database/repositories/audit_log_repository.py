@@ -1,57 +1,33 @@
 """
-CampusGrid AI: PostgreSQL Database Repositories
-Concrete repository implementations communicating with Neon Serverless PostgreSQL.
+CampusGrid AI: Audit Log Repository Implementations
+In-memory and PostgreSQL adapters for the append-only audit trail.
+
+OWNER: Member 1 (Team Lead)
 """
 
 import json
-from typing import List, Dict, Any, Optional
+from typing import List
 from sqlalchemy import text
-from src.domain.interfaces.repositories import (
-    RoomRepository,
-    TimetableRepository,
-    MeterHistoryRepository,
-    AuditLogRepository,
-)
-from src.domain.entities.telemetry import TelemetryInterval
+from src.domain.interfaces.repositories import AuditLogRepository
 from src.domain.entities.audit import AuditRecord
 
-class PostgresRoomRepository(RoomRepository):
-    """PostgreSQL implementation of RoomRepository."""
 
-    def __init__(self, engine):
-        self.engine = engine
+class InMemoryAuditLogRepository(AuditLogRepository):
+    """In-memory append-only audit trail."""
 
-    def get_by_id(self, room_id: str) -> Optional[Dict[str, Any]]:
-        with self.engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT room_id, building_name, room_type, max_capacity, chiller_zone_id FROM rooms WHERE room_id = :id;"),
-                {"id": room_id}
-            ).fetchone()
-            if row:
-                return {
-                    "room_id": row[0],
-                    "building_name": row[1],
-                    "room_type": row[2],
-                    "max_capacity": row[3],
-                    "chiller_zone_id": row[4]
-                }
-        return None
+    def __init__(self):
+        self._logs: List[AuditRecord] = []
+        self._counter = 1
 
-    def list_all(self) -> List[Dict[str, Any]]:
-        with self.engine.connect() as conn:
-            rows = conn.execute(
-                text("SELECT room_id, building_name, room_type, max_capacity, chiller_zone_id FROM rooms;")
-            ).fetchall()
-            return [
-                {
-                    "room_id": r[0],
-                    "building_name": r[1],
-                    "room_type": r[2],
-                    "max_capacity": r[3],
-                    "chiller_zone_id": r[4]
-                }
-                for r in rows
-            ]
+    def log_transaction(self, record: AuditRecord) -> int:
+        record.log_id = self._counter
+        self._counter += 1
+        self._logs.append(record)
+        return record.log_id
+
+    def list_recent(self, limit: int = 50) -> List[AuditRecord]:
+        return list(reversed(self._logs[-limit:]))
+
 
 class PostgresAuditLogRepository(AuditLogRepository):
     """PostgreSQL implementation of AuditLogRepository."""
@@ -83,7 +59,8 @@ class PostgresAuditLogRepository(AuditLogRepository):
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text("""
-                    SELECT log_id, timestamp, user_id, query_text, agent_sequence, final_decision, human_approved, signature
+                    SELECT log_id, timestamp, user_id, query_text, agent_sequence,
+                           final_decision, human_approved, signature
                     FROM audit_log_store
                     ORDER BY log_id DESC
                     LIMIT :lim;
