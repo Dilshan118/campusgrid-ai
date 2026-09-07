@@ -12,8 +12,9 @@ RESPONSIBILITIES:
 
 from typing import List, Dict, Any
 from src.domain.entities.telemetry import TelemetryInterval, PowerForecast
+from src.domain.interfaces.forecaster import DemandForecasterInterface
 
-class DemandForecaster:
+class DemandForecaster(DemandForecasterInterface):
     """
     Predictive model for campus electricity demand and solar generation.
     Assigned to: Member 2

@@ -6,8 +6,9 @@ Preserved as a reference benchmark for Member 2.
 
 from typing import List
 from src.domain.entities.telemetry import TelemetryInterval, PowerForecast
+from src.domain.interfaces.forecaster import DemandForecasterInterface
 
-class BaselineDemandForecaster:
+class BaselineDemandForecaster(DemandForecasterInterface):
     """Predictive baseline model for campus electricity demand."""
 
     def predict(

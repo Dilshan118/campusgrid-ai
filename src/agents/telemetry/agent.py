@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
 from src.domain.interfaces.repositories import MeterHistoryRepository, TimetableRepository
 from src.domain.interfaces.tool import Tool
+from src.domain.interfaces.forecaster import DemandForecasterInterface
 from src.agents.telemetry.forecaster import DemandForecaster
 
 class TelemetryForecastingAgent(BaseAgent):
@@ -17,7 +18,7 @@ class TelemetryForecastingAgent(BaseAgent):
         meter_repo: MeterHistoryRepository,
         timetable_repo: TimetableRepository,
         weather_tool: Tool,
-        forecaster: Optional[DemandForecaster] = None
+        forecaster: Optional[DemandForecasterInterface] = None
     ):
         super().__init__(
             name="Agent 1: Telemetry & Forecasting",
