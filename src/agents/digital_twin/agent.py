@@ -7,8 +7,10 @@ Runs what-if environmental and crowd perturbation simulations.
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
 from src.agents.digital_twin.thermal_model import BuildingThermalTwin
-from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
 from src.domain.interfaces.tool import Tool
+from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
+from src.agents.digital_twin.thermal_model import BuildingThermalTwin
+from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
 
 class DigitalTwinAgent(BaseAgent):
     """Agent 2: Cyber-physical simulator validating feasibility and what-if scenarios."""
@@ -16,8 +18,8 @@ class DigitalTwinAgent(BaseAgent):
     def __init__(
         self,
         simulation_tool: Optional[Tool] = None,
-        thermal_twin: Optional[BuildingThermalTwin] = None,
-        battery_dynamics: Optional[BatteryDynamicsModel] = None
+        thermal_twin: Optional[BuildingThermalTwinInterface] = None,
+        battery_dynamics: Optional[BatteryDynamicsInterface] = None
     ):
         super().__init__(
             name="Agent 2: Digital Twin Simulation",

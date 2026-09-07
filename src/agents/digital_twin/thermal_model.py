@@ -13,8 +13,9 @@ RESPONSIBILITIES:
 """
 
 from typing import List
+from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface
 
-class BuildingThermalTwin:
+class BuildingThermalTwin(BuildingThermalTwinInterface):
     """
     Continuous 2-Resistance 2-Capacitance thermal network simulator.
     Assigned to: Member 3

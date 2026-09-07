@@ -10,8 +10,9 @@ RESPONSIBILITIES:
 """
 
 from typing import List, Tuple
+from src.domain.interfaces.thermal_twin import BatteryDynamicsInterface
 
-class BatteryDynamicsModel:
+class BatteryDynamicsModel(BatteryDynamicsInterface):
     """
     Simulates BESS charge/discharge transitions, efficiency losses, and SOC.
     Assigned to: Member 3

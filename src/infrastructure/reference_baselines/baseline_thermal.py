@@ -5,8 +5,9 @@ Preserved as reference benchmarks for Member 3.
 """
 
 from typing import List, Tuple
+from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
 
-class BaselineBuildingThermalTwin:
+class BaselineBuildingThermalTwin(BuildingThermalTwinInterface):
     """Continuous 2-Resistance 2-Capacitance thermal network simulator."""
 
     def __init__(self, c_in: float = 50.0, r_vent: float = 2.5):
@@ -32,7 +33,7 @@ class BaselineBuildingThermalTwin:
         return temp_history[1:]
 
 
-class BaselineBatteryDynamicsModel:
+class BaselineBatteryDynamicsModel(BatteryDynamicsInterface):
     """Simulates BESS charge/discharge transitions, efficiency losses, and SOC."""
 
     def __init__(
