@@ -29,10 +29,10 @@ class MemoryVectorStore(VectorStore):
     def add_documents(self, documents: List[DocumentClause]) -> List[str]:
         ids = []
         for doc in documents:
-            doc_id = str(doc.id or self._counter)
-            self._counter += 1
             if doc.id is None:
-                doc.id = int(doc_id)
+                doc.id = self._counter
+                self._counter += 1
+            doc_id = str(doc.id)
             self._documents[doc_id] = doc
             ids.append(doc_id)
         return ids

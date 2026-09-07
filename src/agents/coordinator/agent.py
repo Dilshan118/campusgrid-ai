@@ -16,6 +16,24 @@ from src.agents.policy_rag.agent import PolicyRAGAgent
 from src.agents.dispatch_explanation.agent import DispatchExplanationAgent
 from src.domain.interfaces.repositories import AuditLogRepository
 from src.domain.entities.audit import AuditRecord
+from src.domain.exceptions.base import DomainException
+
+
+class AgentPipelineError(DomainException):
+    """Raised when a step of the sequential 4-agent pipeline fails.
+
+    Raising rather than returning an error dict matters: BaseAgent.execute() converts this
+    into AgentExecutionResult(success=False), which the API layer turns into a real HTTP
+    error. Returning a dict instead produced a misleading HTTP 200 with the failure buried
+    in the response body.
+    """
+
+    def __init__(self, agent_label: str, reason: Optional[str]):
+        super().__init__(
+            message=f"{agent_label} failed: {reason}",
+            error_code="AGENT_PIPELINE_FAILED",
+            details={"failed_stage": agent_label, "reason": reason},
+        )
 
 class CampusGridOrchestrator(BaseAgent):
     """Central multi-agent coordinator implementing the 4-agent pipeline."""
@@ -55,7 +73,7 @@ class CampusGridOrchestrator(BaseAgent):
             "building": parsed["building"]
         })
         if not a1_res.success:
-            return {"error": f"Agent 1 failed: {a1_res.error}", "success": False}
+            raise AgentPipelineError("Agent 1 (Telemetry & Forecasting)", a1_res.error)
 
         # 3. Step 2: Agent 2 (Digital Twin Simulation)
         a2_res = self.agent2.execute({
@@ -66,7 +84,7 @@ class CampusGridOrchestrator(BaseAgent):
             "perturb_occ_multiplier": float(input_data.get("perturb_occ_multiplier", 1.0))
         })
         if not a2_res.success:
-            return {"error": f"Agent 2 failed: {a2_res.error}", "success": False}
+            raise AgentPipelineError("Agent 2 (Digital Twin Simulation)", a2_res.error)
 
         # 4. Step 3: Agent 3 (Policy & Information Retrieval RAG)
         a3_res = self.agent3.execute({
@@ -74,7 +92,7 @@ class CampusGridOrchestrator(BaseAgent):
             "top_k": 2
         })
         if not a3_res.success:
-            return {"error": f"Agent 3 failed: {a3_res.error}", "success": False}
+            raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
         # 5. Step 4: Agent 4 (Dispatch & Explanation)
         a4_res = self.agent4.execute({
@@ -86,7 +104,7 @@ class CampusGridOrchestrator(BaseAgent):
             "user_query": user_query
         })
         if not a4_res.success:
-            return {"error": f"Agent 4 failed: {a4_res.error}", "success": False}
+            raise AgentPipelineError("Agent 4 (Dispatch & Explanation)", a4_res.error)
 
         # 6. Assemble sequence and log to immutable audit store
         agent_sequence = {

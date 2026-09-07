@@ -11,8 +11,9 @@ RESPONSIBILITIES:
 
 import os
 from typing import Dict, Any
+from src.domain.interfaces.forecaster import ForecasterTrainerInterface
 
-class ModelTrainer:
+class ModelTrainer(ForecasterTrainerInterface):
     """Offline trainer for campus load and solar forecasting models."""
 
     def __init__(self, data_path: str = "backend/data/seeds/sample_campus_seed.csv"):

@@ -40,7 +40,10 @@ app = FastAPI(
 )
 
 # 1. Custom Exception Handlers
+# The generic handler must be registered too, otherwise any non-domain exception
+# escapes as an unformatted 500 with a stack trace in the response body.
 app.add_exception_handler(DomainException, domain_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 # 2. Middlewares (Order: Tracing -> CORS)
 app.add_middleware(RequestTracingMiddleware)
