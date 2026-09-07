@@ -1,23 +1,18 @@
 """
-Member 1 Workstream: Facility Interface Agent (LLM + spaCy NER)
-Acts as the conversational orchestrator using LangGraph state graphs.
-Parses queries, extracts entities deterministically, invokes tools,
-and generates faithfulness-checked plain-English XAI justifications.
+Backwards compatibility shim for FacilityInterfaceAgent.
+Delegates to the modular Multi-Agent Container and CampusGridOrchestrator.
 """
 
 from typing import Dict, Any
+from src.application.container import get_container
 
 class FacilityInterfaceAgent:
-    """
-    Coordinates user intent parsing, tool invocation (MCP), and XAI explanation.
-    Enforces the Golden Safety Rule: The LLM never computes math or writes to physical switches.
-    """
     def __init__(self, model_name: str = "gemini-1.5-flash"):
-        self.model_name = model_name
+        self.container = get_container()
+        self.orchestrator = self.container.orchestrator
 
-    def process_query(self, user_message: str, current_telemetry: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Parses intent using spaCy NER, invokes solver or RAG if needed,
-        and returns a grounded plain-English response.
-        """
-        pass
+    def process_query(self, user_message: str, current_telemetry: Dict[str, Any] = None) -> Dict[str, Any]:
+        res = self.orchestrator.execute({"query": user_message})
+        return res.data if res.success else {"error": res.error}
+
+__all__ = ["FacilityInterfaceAgent"]

@@ -1,37 +1,22 @@
 """
-CampusGrid AI: Database Connection & Session Manager
-Configures SQLAlchemy & SQLModel engine with native support for Neon Serverless
-PostgreSQL and the pgvector extension.
+CampusGrid AI: Database Connection Manager (Backwards-Compatibility Shim)
+Re-exports database engine and session generator from src.application.container.
 """
 
 from typing import Generator
-from sqlmodel import SQLModel, create_engine, Session
-from sqlalchemy import text
-from backend.core.config import get_settings
+from src.application.container import get_container
 
-settings = get_settings()
-
-# Engine creation with connection pooling for Neon / PostgreSQL
-# Note: Neon works best with standard connection pooling or Neon's pgbouncer pooler URL
-engine = create_engine(
-    settings.database_url,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
-    pool_pre_ping=True,  # Crucial for serverless databases that sleep
-)
+container = get_container()
+engine = container.session_manager.engine if container.session_manager else None
 
 def init_db():
-    """
-    Initializes PostgreSQL extensions (vector) and creates all SQLModel tables.
-    Safe to run repeatedly on startup.
-    """
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-        conn.commit()
-    
-    SQLModel.metadata.create_all(engine)
+    if container.session_manager:
+        container.session_manager.init_database()
 
-def get_session() -> Generator[Session, None, None]:
-    """FastAPI dependency for yielding database sessions."""
-    with Session(engine) as session:
-        yield session
+def get_session():
+    if container.session_manager:
+        yield from container.session_manager.get_session()
+    else:
+        yield None
+
+__all__ = ["engine", "init_db", "get_session"]

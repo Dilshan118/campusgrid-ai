@@ -1,23 +1,18 @@
 """
-Central Orchestrator: LangGraph State Machine
-Routes tasks between Agent 1, Agent 2, Agent 3, and Agent 4 using typed state.
-Uses the pluggable LLM Manager for query decomposition without hardcoded model references.
+Backwards compatibility shim for CampusGridOrchestrator.
+Delegates to src.agents.coordinator.agent.CampusGridOrchestrator.
 """
 
-from typing import Dict, Any, List
-from backend.core.llm_manager import get_llm
-
-llm = get_llm()
+from typing import Dict, Any
+from src.application.container import get_container
 
 class CampusGridOrchestrator:
-    """
-    Coordinates multi-agent execution pipeline:
-    Query -> NLP Extraction -> Forecast (Agent 1) -> Feasibility (Agent 2)
-    -> Constraints (Agent 3) -> Dispatch & Explanation (Agent 4)
-    """
     def __init__(self):
-        self.active_model = llm.get_active_model_info()
+        self.container = get_container()
+        self._orchestrator = self.container.orchestrator
 
     def route_query(self, user_prompt: str) -> Dict[str, Any]:
-        """Plans which agents to call and handles task sequencing."""
-        pass
+        res = self._orchestrator.execute({"query": user_prompt})
+        return res.data if res.success else {"error": res.error}
+
+__all__ = ["CampusGridOrchestrator"]

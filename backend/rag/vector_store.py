@@ -1,23 +1,21 @@
 """
-Member 2 Workstream: Hybrid Dense/Sparse RAG Engine
-Combines ChromaDB vector search and Rank-BM25 sparse keyword search
-with Reciprocal Rank Fusion (RRF) and Cross-Encoder reranking.
+Backwards compatibility shim for TariffKnowledgeEngine.
+Delegates to the modular RetrievalService and VectorStore.
 """
 
 from typing import List, Dict, Any
+from src.application.container import get_container
 
 class TariffKnowledgeEngine:
-    """
-    Indexes official PUCSL electricity tariff rate sheets and ASHRAE-55 standards.
-    Provides verified clause numbers, section citations, and rupee amounts.
-    """
     def __init__(self, persist_dir: str = "backend/data/storage/chroma_db"):
-        self.persist_dir = persist_dir
+        self.container = get_container()
+        self.retrieval_service = self.container.retrieval_service
 
     def index_corpus(self, document_chunks: List[Dict[str, Any]]):
-        """Indexes chunks into ChromaDB and builds BM25 inverted index."""
         pass
 
     def hybrid_search(self, query: str, top_k: int = 2) -> List[Dict[str, Any]]:
-        """Executes dense + sparse search, merges via RRF, and reranks."""
-        pass
+        res = self.retrieval_service.search(query=query, top_k=top_k)
+        return res.get("citations", [])
+
+__all__ = ["TariffKnowledgeEngine"]

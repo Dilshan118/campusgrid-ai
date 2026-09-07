@@ -1,19 +1,16 @@
 """
-Access & Security Layer: Audit and Log Store
-Append-only record of queries, agent messages, decisions, and approvals.
-Encrypted at rest and persisted directly to Neon PostgreSQL.
+Backwards compatibility shim for AuditLogStore.
+Delegates to src.application.services.audit_service.
 """
 
 from typing import Dict, Any
-from sqlalchemy import text
-from backend.core.database import engine
+from src.application.container import get_container
 
 class AuditLogStore:
-    """
-    Guarantees non-repudiation and traceability for regulatory compliance.
-    Every operator query, intermediate agent output, solver decision,
-    and human approval is recorded immutably.
-    """
+    def __init__(self):
+        self.container = get_container()
+        self.audit_service = self.container.audit_service
+
     def log_transaction(
         self,
         user_id: str,
@@ -22,5 +19,12 @@ class AuditLogStore:
         final_decision: Dict[str, Any],
         human_approved: bool = False
     ):
-        """Appends a new audit record to PostgreSQL."""
-        pass
+        return self.audit_service.log_operator_action(
+            user_id=user_id,
+            query=query_text,
+            agent_sequence=agent_sequence,
+            decision=final_decision,
+            approved=human_approved
+        )
+
+__all__ = ["AuditLogStore"]
