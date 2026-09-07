@@ -1,26 +1,29 @@
-# CampusGrid AI: Production Backend Dockerfile
+# CampusGrid AI: Backend Container
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system build dependencies
+# Build toolchain needed by psycopg2-binary / scientific wheels on slim images
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy build files and requirements
-COPY pyproject.toml requirements.txt* ./
-RUN pip install --no-cache-dir -U pip setuptools wheel
-RUN pip install --no-cache-dir fastapi uvicorn pydantic pydantic-settings sqlmodel pulp numpy pandas litellm
+# Copy the single source of dependency truth first so this layer caches.
+COPY pyproject.toml README.md ./
 
-# Copy application code
+# Application code
 COPY src/ ./src/
 COPY backend/ ./backend/
-COPY README.md .env.example ./
+COPY .env.example ./
 
-# Install local package in editable mode
-RUN pip install --no-cache-dir -e .
+# Install from pyproject rather than a hardcoded package list, so the image
+# can never drift from the manifest. Swap the extras to suit the deployment:
+#   ".[postgres]"            - API against Neon, mock embeddings
+#   ".[postgres,rag]"        - adds real sentence-transformers embeddings (large)
+#   ".[all]"                 - everything, including ML and dev tooling
+RUN pip install --no-cache-dir -U pip setuptools wheel \
+    && pip install --no-cache-dir -e ".[postgres]"
 
 EXPOSE 8000
 

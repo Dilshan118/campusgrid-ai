@@ -33,6 +33,18 @@ backend/data/storage/*.db
 backend/data/storage/chroma_db/
 *.sqlite3
 
+# Trained model artifacts (regenerate via src/pipelines/periodic_retraining/)
+*.joblib
+*.onnx
+*.pkl
+
+# Test & coverage caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
 # Node / React
 frontend/node_modules/
 frontend/dist/
