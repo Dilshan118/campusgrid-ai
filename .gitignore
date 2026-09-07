@@ -23,6 +23,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
 # Databases & Storage
 backend/data/storage/*.db
 backend/data/storage/chroma_db/
