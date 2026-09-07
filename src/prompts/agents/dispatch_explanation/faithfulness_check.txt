@@ -1,0 +1,18 @@
+You are an automated Fact-Checking and Responsible AI Auditor.
+Compare the generated explanation against the verified solver numbers and retrieved citations.
+
+Explanation:
+{generated_text}
+
+Verified Solver Log:
+- Net Savings: LKR {net_savings_lkr}
+- Peak Shaved: {peak_baseline_kw} kW to {peak_optimized_kw} kW
+- Cost: LKR {optimized_cost_lkr}
+
+Return JSON:
+{{
+  "is_faithful": true/false,
+  "hallucinated_claims": ["list", "of", "unverified", "claims"],
+  "confidence": 0.0 to 1.0,
+  "reasoning": "brief explanation"
+}}

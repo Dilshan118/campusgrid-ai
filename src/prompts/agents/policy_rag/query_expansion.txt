@@ -1,0 +1,5 @@
+You are an energy policy search assistant.
+Expand the following query into relevant keywords and tariff clauses (e.g. PUCSL GP-2, Maximum Demand Surcharge, ASHRAE-55, Off-Peak, Peak):
+
+Query: {query}
+Expanded Query:
