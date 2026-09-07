@@ -5,6 +5,11 @@
 **Preferred GitHub Repository Name:** `campusgrid-ai`  
 **System Version:** Production v4.2  
 
+> ### 👉 New to this project? Read [`TEAM_GUIDES/START_HERE.md`](TEAM_GUIDES/START_HERE.md) first.
+> It explains in plain English what we are building, how the four agents work together,
+> what is already done, what each team member is responsible for, and the week-by-week plan.
+> This README covers installing and running the system.
+
 ---
 
 ## 1. Project Overview
@@ -58,7 +63,7 @@ is implemented and covered by the test suite.
 
 ### Prerequisites
 * **Node.js:** v18.x or v20.x
-* **Python:** v3.11 or newer
+* **Python:** v3.10 or newer (matches `requires-python` in `pyproject.toml`)
 * **Git**
 
 ---

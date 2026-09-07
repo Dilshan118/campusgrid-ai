@@ -2,6 +2,10 @@
 
 **This file is the single source of truth for who owns what.**
 
+For what the project is, how the agents work and what happens each week, read
+[`START_HERE.md`](START_HERE.md) first. This file answers only one question: *may I edit
+this file?*
+
 Earlier ownership tables exist in `docs/CAMPUSGRID_AI_MASTER_ARCHITECTURAL_BLUEPRINT_AND_SRS.md`
 (§12.1) and `docs/CAMPUSGRID_AI_SIMPLIFIED_SRS_AND_SYSTEM_GUIDE.md` (View 7). They
 **contradict each other and this file**. Those two documents are coursework submissions and
