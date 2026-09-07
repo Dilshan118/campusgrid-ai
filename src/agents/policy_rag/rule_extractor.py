@@ -5,6 +5,7 @@ Extracts exact tariff rates, time windows, and comfort limits using deterministi
 
 import re
 from typing import Dict, Any, List
+from src.domain.interfaces.policy_extractor import RegulatoryRuleExtractorInterface
 from src.shared.constants import (
     TARIFF_PEAK_LKR,
     TARIFF_DAY_LKR,
@@ -14,7 +15,7 @@ from src.shared.constants import (
     COMFORT_TEMP_MAX_C,
 )
 
-class RegulatoryRuleExtractor:
+class RegulatoryRuleExtractor(RegulatoryRuleExtractorInterface):
     """Extracts numeric constraints and time blocks from tariff and comfort documents."""
 
     def extract_tariff_rules(self, text: str) -> Dict[str, Any]:

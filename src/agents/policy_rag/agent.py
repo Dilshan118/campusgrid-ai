@@ -6,6 +6,7 @@ Emits verified regulatory constraints and citations for Agent 4's MILP solver an
 
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
+from src.domain.interfaces.policy_extractor import RegulatoryRuleExtractorInterface
 from src.agents.policy_rag.rule_extractor import RegulatoryRuleExtractor
 from src.domain.entities.rag import DocumentClause, Citation
 
@@ -15,7 +16,7 @@ class PolicyRAGAgent(BaseAgent):
     def __init__(
         self,
         retrieval_service: Any,
-        rule_extractor: Optional[RegulatoryRuleExtractor] = None
+        rule_extractor: Optional[RegulatoryRuleExtractorInterface] = None
     ):
         super().__init__(
             name="Agent 3: Policy & Information Retrieval",
