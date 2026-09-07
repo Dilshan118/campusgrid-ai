@@ -1,139 +1,194 @@
-# Member 2 Guide: Telemetry, Forecasting & Privacy Audit
+# Developer 1 — Data, Machine Learning & Privacy
 
-**Assigned Member:** Member 2 (Telemetry, Data Engineering & Machine Learning)  
-**Assigned Agent:** Agent 1 — Telemetry and Forecasting  
-**Individual Security Specialization:** Student 2 — Privacy and Data Leakage Assessment (80 Marks Report + 20 Marks Viva)
-
----
-
-## 1. What is Your Job? (In Simple Plain English)
-
-Imagine you are the **Campus Weather & Energy Forecaster**.
-
-Every single day, the university campus consumes electricity for lecture halls, laboratories, air conditioners, and computers. At the same time, rooftop solar panels generate clean electricity from the sun.
-
-Your job is to look at:
-1. **Past meter data:** How much electricity the campus usually uses at every time of day.
-2. **The weather:** How hot it will be tomorrow (hotter weather means people turn up the AC).
-3. **Classroom timetables:** How many students will be sitting in the classrooms.
-
-With this information, you predict:
-- How much electricity the campus will demand tomorrow for every 30-minute interval (48 numbers).
-- How much solar energy the rooftop panels will generate.
-- The safe upper and lower boundaries (confidence intervals) so the campus knows if an unusual spike is happening.
-
-In addition, as **Student 2 (AI Security Analyst)**, you audit the system to make sure nobody can spy on students or figure out which secret laboratory machines are running by looking at power meter data.
+**Member:** Member 2 · **Agent:** Agent 1 — Telemetry and Forecasting
+**Security audit:** Student 2 — Privacy and Data Leakage (80 marks report + 20 marks viva)
+**Branch:** `feature/dev1-telemetry-forecasting`
+**Ownership:** see [`OWNERSHIP.md`](OWNERSHIP.md) — it is authoritative
 
 ---
 
-## 2. Your Assigned Files (Do NOT Edit Any Other Files)
+## 1. Your job, in plain English
 
-To avoid git conflicts with teammates, **you only touch these 4 files**:
+You are the **campus energy forecaster**.
 
-1. `src/agents/telemetry/forecaster.py` (Your forecasting algorithm)
-2. `src/pipelines/periodic_retraining/train_forecaster.py` (Your offline ML training script)
-3. `tests/unit/test_member2_telemetry.py` (Your unit test)
-4. `tests/red_team_security_audits/test_student2_privacy_leakage.py` (Your 15 security audit test cases)
+Every day the university burns electricity on lecture halls, labs, computers and air
+conditioning, while rooftop solar panels generate some of it back. Your job is to look at
+three things — what the campus used before, how hot tomorrow will be, and how many students
+are timetabled into each room — and predict **tomorrow's electricity, half hour by half hour**.
 
-*(A working reference implementation is available at `src/infrastructure/reference_baselines/baseline_forecaster.py` if you want to see an example).*
+Everything downstream depends on your numbers. The physics simulation uses your temperatures,
+and the battery optimiser uses your demand figures. If your numbers are wrong, the whole
+system is wrong.
 
----
-
-## 3. What You Receive and What You Must Return
-
-### Inputs Given to You:
-- `historical_intervals`: 48 intervals of yesterday's meter readings (`base_load_kw`, `solar_gen_kw`).
-- `temperature_series`: 48 ambient temperature numbers in Celsius (e.g. `[28.0, 29.5, 31.0, ...]`).
-- `occupancy_counts`: 48 headcounts of students in the rooms (e.g. `[0, 50, 120, ...]`).
-
-### What You Must Return (`PowerForecast` entity):
-- `time_slots`: List of 48 strings (`["00:00", "00:30", ..., "23:30"]`).
-- `forecast_demand_kw`: List of 48 predicted campus demand numbers (kW).
-- `forecast_solar_kw`: List of 48 predicted solar generation numbers (kW).
-- `lower_bound_kw`: 95% lower confidence bound (~6% below forecast).
-- `upper_bound_kw`: 95% upper confidence bound (~6% above forecast).
-- `anomaly_indices`: List of indices where demand spikes dangerously (e.g. > 850 kW).
+Separately, as **Student 2**, you attack the system to prove nobody can spy on students or
+work out which lab equipment is running just by staring at power meter readings.
 
 ---
 
-## 4. Copy-Paste Prompts for Claude Code
+## 2. What to build
 
-### Prompt 1: Implement Your Forecasting Algorithm (`forecaster.py`)
-Copy and paste this prompt directly into **Claude Code**:
+### 2.1 The forecaster — `src/agents/telemetry/forecaster.py`
 
-```text
-Please implement the predict() method in `src/agents/telemetry/forecaster.py`.
-Requirements:
-1. Ingest historical_intervals, temperature_series, and occupancy_counts.
-2. For each 30-minute interval:
-   - Calculate cooling load: If temperature is above 28.0°C, add 15 kW for every degree above 28°C.
-   - Calculate occupancy equipment load: Add 0.05 kW for each student in the room.
-   - Forecast demand = base_load + cooling_load + occupancy_load.
-   - Forecast solar = historical solar_gen_kw.
-   - Compute lower bound (forecast * 0.94) and upper bound (forecast * 1.06).
-   - Flag any index where predicted demand exceeds 850 kW as an anomaly.
-3. Return a valid `PowerForecast` object containing all 48 intervals.
-4. Ensure all types match `src/domain/entities/telemetry.py`.
+Implement `predict()`. It receives past meter intervals, a temperature series and occupancy
+counts, and returns a `PowerForecast` containing 48 demand values, 48 solar values, upper and
+lower confidence bounds, and a list of intervals where demand looks abnormally high.
+
+Your class already inherits `DemandForecasterInterface` — keep that. It is what lets the team
+lead swap your model in and out without touching any other file.
+
+### 2.2 A real weather feed — `src/infrastructure/tools/weather_tool.py`
+
+Today this returns the same 48 hardcoded temperatures no matter what date you ask for.
+Replace it with a real **Open-Meteo** call for the campus coordinates already in settings —
+free, no API key needed. Cache the result, and fall back to the built-in curve if the network
+is unavailable so tests never depend on the internet.
+
+### 2.3 Real database access — the meter and timetable repositories
+
+Right now the system reads from a 48-row CSV **even when it is configured to use PostgreSQL**,
+because the Postgres versions of these two repositories do not exist yet. Write them:
+
+- `src/infrastructure/database/repositories/meter_history_repository.py`
+- `src/infrastructure/database/repositories/timetable_repository.py`
+
+The `meter_history` table in `backend/data/init.sql` now mirrors the `TelemetryInterval`
+entity field-for-field, so no translation layer is needed. Ask the team lead for the Neon
+connection string.
+
+### 2.4 Real training data
+
+The repository has exactly one synthetic day. Get at least **90 days** of half-hourly campus
+data. The recommended source is **Building Data Genome 2 (BDG2)**, the open ASHRAE benchmark.
+If you generate data synthetically instead, that is acceptable — but write your assumptions
+down in a README next to the data file. An examiner will ask where the data came from.
+
+### 2.5 Train an actual model — `src/pipelines/periodic_retraining/train_forecaster.py`
+
+Load the historical data, build features (hour of day, day of week, outdoor temperature,
+occupancy), train a LightGBM or scikit-learn regressor, measure **RMSE and MAE** on a 20% test
+split, and save the model.
+
+Then compare it against the simple rule-based baseline in
+`src/infrastructure/reference_baselines/baseline_forecaster.py`.
+
+> **That comparison is your headline result.** "My model scores X, the baseline scores Y" is
+> what you present and defend. Write the numbers down as soon as you have them.
+
+### 2.6 NEW — a plain-English forecast summary
+
+After producing the numbers, make **one LLM call** that writes a two-sentence note explaining
+what is unusual about tomorrow. For example:
+
+> *"Tomorrow's demand runs about 12% above a normal Tuesday, driven by a 33°C afternoon and
+> two large lectures in the Main Academic Complex between 13:00 and 16:00."*
+
+Use the injected `LLMProvider` — never call an SDK directly. Ask the team lead to wire it in.
+
+**Why this matters:** the assignment brief explicitly names **summarisation** as a required
+NLP technique. This is how Agent 1 earns that mark. It is roughly 20 lines.
+
+> The LLM writes the *sentence*. It must never produce the *numbers* — those come from your
+> forecaster. If the LLM invents a figure, that is a hallucination and Student 3's audit will
+> catch it.
+
+### 2.7 Privacy protection
+
+Add optional differential-privacy noise to meter readings before they leave your layer. This
+is both a Responsible AI requirement in the brief and the core subject of your own audit.
+
+---
+
+## 3. Your security audit — 15 real test cases
+
+File: `tests/red_team_security_audits/test_student2_privacy_leakage.py`
+
+Cover: student and staff schedule de-anonymisation, sub-meter appliance disaggregation (NILM),
+cross-campus data leakage, differential-privacy noise verification, markdown/URL exfiltration,
+and prompt-based extraction of raw database records.
+
+Every case uses the mandatory 7-point schema: test ID, objective, attack scenario, expected
+behaviour, actual behaviour, evidence, severity and mitigation.
+
+> ### ⚠️ Read this before you write a single test
+>
+> The two example tests currently in that file are **wrong** and must not be copied. They
+> build a dictionary of hardcoded strings — including a made-up "actual behaviour" — and then
+> assert the dictionary has seven keys. No attack is ever executed. The `test_container`
+> fixture is passed in and never used.
+>
+> **Your tests must actually run.** Call the real API or the real container, send the real
+> attack, capture the real response, and assert on what really came back. Then paste that real
+> output into your report as evidence.
+>
+> Invented evidence in an 80-mark security report is both a marks risk and an academic
+> integrity risk. Schedule these for **week 4, after integration** — you need a working system
+> to attack.
+
+---
+
+## 4. Files you own
+
+```
+src/agents/telemetry/
+src/infrastructure/tools/weather_tool.py
+src/infrastructure/database/repositories/meter_history_repository.py
+src/infrastructure/database/repositories/timetable_repository.py
+src/pipelines/periodic_retraining/
+tests/unit/test_member2_telemetry.py
+tests/red_team_security_audits/test_student2_privacy_leakage.py
+your dataset files + their README
 ```
 
----
+## 5. Do not modify
 
-### Prompt 2: Implement Offline Retraining (`train_forecaster.py`)
-Copy and paste this prompt directly into **Claude Code**:
-
-```text
-Please implement the offline model retraining script in `src/pipelines/periodic_retraining/train_forecaster.py`.
-Requirements:
-1. Read the historical dataset from `backend/data/seeds/sample_campus_seed.csv` using pandas.
-2. Engineer features: hour of day, day of week, outdoor_temp_c, zone_occupancy_count.
-3. Train a Scikit-Learn or LightGBM regressor predicting base_load_kw.
-4. Calculate RMSE and MAE on a 20% test split.
-5. Save the trained model pipeline to `src/agents/telemetry/model.joblib`.
+```
+src/domain/                                  the shared contracts — ask the lead
+src/application/container.py                 request wiring, do not edit
+src/config/settings.py                       request settings, do not edit
+src/agents/digital_twin/  dispatch_explanation/  policy_rag/  coordinator/
+src/infrastructure/tools/simulation_tool.py, __init__.py, registry.py
+src/infrastructure/reference_baselines/      read for reference, never edit
+src/api/    frontend/
 ```
 
----
-
-### Prompt 3: Implement Your 15 Red Team Security Test Cases (Student 2 - 80 Marks)
-Copy and paste this prompt directly into **Claude Code**:
-
-```text
-I am Student 2 conducting the 80-mark AI Security Audit on 'Privacy and Data Leakage Assessment' for CampusGrid AI.
-Please implement all 15 adversarial test cases (TC-S2-01 to TC-S2-15) in `tests/red_team_security_audits/test_student2_privacy_leakage.py`.
-
-Every test case MUST follow the mandatory 7-point schema:
-1. test_id (e.g. TC-S2-01, TC-S2-02, ..., TC-S2-15)
-2. test_objective (Clear statement of the privacy boundary tested)
-3. attack_scenario (Exact adversarial query or data-leak payload)
-4. expected_behaviour (Privacy-preserving behavior)
-5. actual_behaviour (Observed system behavior)
-6. evidence_log (Simulated or actual log snippet)
-7. severity_and_mitigation (CVSS score + engineering patch)
-
-Topics to cover across the 15 test cases:
-- Student and faculty schedule deanonymization.
-- Sub-meter Non-Intrusive Load Monitoring (NILM) appliance disaggregation attacks.
-- Cross-tenant data leakage between campuses.
-- Differential Privacy (Laplace noise epsilon=1.0) verification.
-- Markdown image and URL exfiltration attacks.
-- Prompt-based indirect extraction of raw database records.
-```
+Need a class wired into the container, or a new setting? Open an issue titled
+`WIRE: <class> into container`. The team lead makes that edit. This one rule prevents most
+merge conflicts on this project.
 
 ---
 
-## 5. How to Test and Verify Your Work
+## 6. What you depend on, and what you owe
 
-Open your terminal and run your dedicated test command:
+**From the team lead:** the `DemandForecasterInterface` you implement (already in place), the
+Neon connection string, an injected `LLMProvider` for your summary, and container wiring.
+
+**You must provide — these shapes are contracts, do not change them without telling the lead:**
+
+| Output | Used by |
+|---|---|
+| `PowerForecast` — 48 each of demand, solar, lower bound, upper bound, anomaly indices | Developer 3 (solver input) |
+| 48 ambient temperatures | Developer 2 (physics input) |
+| 48 occupancy counts | Developer 2 (physics input) |
+| 48 tariff values | Developer 3 (cost objective) |
+| Plain-English forecast summary | Team Lead (dashboard) |
+
+**Blocked waiting on someone?** You are not. Set `USE_REFERENCE_BASELINES=true` in your `.env`
+and the whole pipeline runs with working stand-ins for everyone else's work.
+
+---
+
+## 7. Done means
+
+- [ ] `pytest tests/unit/test_member2_telemetry.py` passes with **no skips**
+- [ ] A forecast comes out of **PostgreSQL**, not the CSV fallback
+- [ ] The weather tool returns **different values for different dates**
+- [ ] You can state your model's RMSE and MAE, and how they beat the baseline
+- [ ] The forecast summary reads naturally and contains no number the model didn't produce
+- [ ] All 15 security tests **execute real attacks** and record real observed behaviour
+- [ ] `pytest tests/` fully green
 
 ```bash
 pytest tests/unit/test_member2_telemetry.py -v
-```
-
-When your code is working correctly, you will see:
-```text
-tests/unit/test_member2_telemetry.py::test_member2_forecaster_contract PASSED [100%]
-```
-
-To run your security audit test cases:
-```bash
 pytest tests/red_team_security_audits/test_student2_privacy_leakage.py -v
+pytest tests/ -v
 ```

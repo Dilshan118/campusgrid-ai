@@ -24,6 +24,10 @@ Your 3 teammates now have **completely isolated, conflict-free sandboxes** to bu
 
 ## 2. Team Responsibility Matrix
 
+> The summary below is kept for orientation. **[`OWNERSHIP.md`](OWNERSHIP.md) is the
+> authoritative, file-level matrix** — it resolves the five collision points, names the
+> request-only files, and is what pull-request review is checked against.
+
 ```
 +──────────────┬────────────────────────────┬─────────────────────────────┬───────────────────────────+
 | Member       | Core System Domain         | Assigned Code Sandbox       | 80-Mark Security Audit    |

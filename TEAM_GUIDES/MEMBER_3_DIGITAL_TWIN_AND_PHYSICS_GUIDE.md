@@ -1,137 +1,184 @@
-# Member 3 Guide: Digital Twin, Physics Simulation & Tool Security Audit
+# Developer 2 — Digital Twin, Physics & Tool Security
 
-**Assigned Member:** Member 3 (Digital Twin, Cyber-Physical Physics & Simulation)  
-**Assigned Agent:** Agent 2 — Digital Twin Simulation  
-**Individual Security Specialization:** Student 4 — Information Retrieval, Vector Store & Tool/MCP Security Assessment (80 Marks Report + 20 Marks Viva)
-
----
-
-## 1. What is Your Job? (In Simple Plain English)
-
-Imagine you are the **Campus Cyber-Physical Engineer**.
-
-The university has real physical assets: classroom buildings with air conditioners (HVAC), and a big campus battery (500 kWh Battery Energy Storage System - BESS).
-
-Before we change the temperature or charge the battery in the real world, we need to test everything in a computer simulation (a **Digital Twin**):
-1. **Classroom Thermal Physics:** If it is 32°C outside and 80 students walk into a lecture hall, how fast will the room heat up? If the AC runs at 35 kW, will students remain comfortable according to international standards (between 21.0°C and 25.5°C)?
-2. **Battery Physics:** When the battery charges or discharges, how much power is lost as heat (92% round-trip efficiency)? Is the battery staying safely between 20% and 90% so it doesn't get damaged?
-3. **What-If Simulations:** What if a heatwave strikes (+3°C hotter)? What if 200 extra students arrive for a conference? Your simulation tells the campus whether the building will overheat.
-
-In addition, as **Student 4 (AI Security Analyst)**, you audit the system to prevent hackers from tampering with the simulation tools, poisoning vector databases, or sending dangerous commands like telling the AC to freeze the room to -10°C.
+**Member:** Member 3 · **Agent:** Agent 2 — Digital Twin Simulation
+**Security audit:** Student 4 — Retrieval, Vector Store & Tool/MCP Security (80 marks report + 20 marks viva)
+**Branch:** `feature/dev2-digital-twin-physics`
+**Ownership:** see [`OWNERSHIP.md`](OWNERSHIP.md) — it is authoritative
 
 ---
 
-## 2. Your Assigned Files (Do NOT Edit Any Other Files)
+## 1. Your job, in plain English
 
-To avoid git conflicts with teammates, **you only touch these 4 files**:
+You are the **cyber-physical engineer**.
 
-1. `src/agents/digital_twin/thermal_model.py` (Your 2R2C room temperature simulator)
-2. `src/agents/digital_twin/battery_dynamics.py` (Your battery charge & SOC simulator)
-3. `tests/unit/test_member3_digital_twin.py` (Your unit tests)
-4. `tests/red_team_security_audits/test_student4_retrieval_mcp_security.py` (Your 15 security audit test cases)
+Before this system tells anyone to cool a lecture hall or drain a 500 kWh battery, somebody has
+to check that the plan is physically safe. That is you.
 
-*(A working reference implementation is available at `src/infrastructure/reference_baselines/baseline_thermal.py` if you want to see an example).*
+If it is 33°C outside and 200 students walk into a hall, how fast does the room heat up? Does it
+stay inside the comfort band of 21.0°C to 25.5°C that people can actually work in? If the
+battery discharges hard through the evening peak, does it drop below the 20% floor that damages
+the cells?
 
----
+You answer those questions with physics, not guesswork. Your feasibility verdict is what makes
+the final recommendation trustworthy.
 
-## 3. What You Receive and What You Must Return
-
-### For Room Thermal Simulation (`BuildingThermalTwin.simulate`):
-- **Inputs:** `initial_temp_c` (e.g. 24.0°C), `ambient_temps` (48 outdoor temps), `occupant_counts` (48 headcounts), `hvac_power_kw` (48 cooling power numbers).
-- **Return:** A list of 48 simulated indoor temperature values (`List[float]`).
-
-### For Battery Simulation (`BatteryDynamicsModel.simulate_soc_trajectory`):
-- **Inputs:** `initial_soc_kwh` (e.g. 250 kWh), `charge_kw_series` (48 charge powers), `discharge_kw_series` (48 discharge powers).
-- **Return:** A tuple: `(soc_history, violations_count)`:
-  - `soc_history`: List of 48 battery energy levels (kWh).
-  - `violations_count`: Number of times the battery dropped below 20% (100 kWh) or exceeded 90% (450 kWh).
+Separately, as **Student 4**, you attack the system's tools and its document search — trying to
+send the simulator dangerous commands, and trying to poison the tariff knowledge base.
 
 ---
 
-## 4. Copy-Paste Prompts for Claude Code
+## 2. What to build
 
-### Prompt 1: Implement Room Thermal Physics (`thermal_model.py`)
-Copy and paste this prompt directly into **Claude Code**:
+### 2.1 The room thermal model — `src/agents/digital_twin/thermal_model.py`
 
-```text
-Please implement the `simulate()` method in `src/agents/digital_twin/thermal_model.py`.
-Requirements:
-1. Implement the 2-Resistance 2-Capacitance (2R2C) differential equation:
-   dT_in / dt = (1 / (r_vent * c_in)) * (T_amb - T_in) + (Q_occupants - Q_hvac) / c_in
-2. Start with temp_history = [initial_temp_c].
-3. For each 30-minute interval (dt_hours = 0.5):
-   - Q_occ = occupants * 0.10 kW (each student emits 100 Watts).
-   - Q_transfer = (t_amb - current_temp) / self.r_vent.
-   - delta_t = (Q_transfer + Q_occ - q_hvac) * (dt_hours / self.c_in).
-   - next_temp = round(current_temp + delta_t, 2).
-   - Append next_temp to temp_history.
-4. Return temp_history[1:] (the 48 simulated indoor temperatures).
+Implement `simulate()`. Step through 48 half-hour intervals. In each one: students give off
+heat (about 100 watts each), outside air leaks through the walls in or out, and the air
+conditioning removes heat. Return the indoor temperature at every interval.
+
+Your class already inherits `BuildingThermalTwinInterface` — keep that.
+
+### 2.2 The battery model — `src/agents/digital_twin/battery_dynamics.py`
+
+Implement `simulate_soc_trajectory()`. Track the stored energy as it charges and discharges,
+account for the roughly 8% lost as heat on a round trip, and count every interval where the
+charge level leaves the safe 20%–90% band.
+
+### 2.3 Stop guessing the physics constants
+
+The model currently hardcodes a thermal capacity of `50.0` and a resistance of `2.5`. Those are
+guesses. **Fit them from data** using `scipy.optimize.least_squares` against measured indoor
+temperatures, and report how much more accurate the fitted model is than the guessed one.
+
+> **This is your headline result.** "Guessed constants gave X error, fitted constants gave Y" is
+> what you present. It turns a toy model into a calibrated grey-box, and it is excellent viva
+> material.
+
+### 2.4 Delete the duplicate physics
+
+The same equations currently exist in **three** places: your `thermal_model.py`,
+`src/infrastructure/tools/simulation_tool.py`, and the reference baseline. That is a bug waiting
+to happen — fix one copy and the others silently disagree.
+
+Make `simulation_tool.py` call your model instead of keeping its own copy. After you are done
+there must be **exactly one** implementation of the 2R2C equations in the codebase.
+
+### 2.5 Make the safety limits configurable
+
+The numbers `21.0` and `25.5` are typed directly into the code in several places, and there are
+three separate definitions of the comfort band across the project. Read them from settings so
+they can never disagree. Ask the team lead to expose any setting you need.
+
+### 2.6 Proper what-if scenarios
+
+Build three: a heatwave (+4°C), a crowd surge (double occupancy), and a solar dropout. Each
+returns whether the building stays comfortable and, if not, by how much it misses.
+
+### 2.7 NEW — expose the simulator as a real MCP tool
+
+Right now the simulation tool is called as a plain Python function. Expose it over the **Model
+Context Protocol** so it becomes a genuine tool call across a defined protocol boundary.
+
+**Why this matters, twice over:**
+
+1. The assignment brief requires **"defined agent communication protocols (e.g. MCP, HTTP,
+   sockets)"**. HTTP is already covered by the REST endpoints. Making this a real MCP tool is
+   how the project claims MCP honestly instead of just naming it in a diagram.
+2. It is **your own audit topic**. You cannot credibly test MCP parameter spoofing and tool
+   interception against a tool that is really just a function call.
+
+Keep it behind the existing `Tool` interface so nothing else in the codebase has to change.
+
+> **Validate every parameter at the tool boundary.** The tool must refuse `-15°C` or `5000 kW`
+> outright. Rejecting them is a feature, and it is the mitigation you will write up in your
+> report.
+
+---
+
+## 3. Your security audit — 15 real test cases
+
+File: `tests/red_team_security_audits/test_student4_retrieval_mcp_security.py`
+
+Cover: MCP/tool parameter spoofing (commanding impossible temperatures or power levels), RAG
+index poisoning (feeding in a fake tariff document claiming electricity costs 0.05 rupees),
+vector embedding collision and cluster manipulation, vector-store denial of service with
+oversized query vectors, interception of unencrypted tool calls, and payload tampering.
+
+Every case uses the mandatory 7-point schema.
+
+> ### ⚠️ Two things before you start
+>
+> **First — the existing examples are wrong.** They build a dictionary of hardcoded strings,
+> including a made-up "actual behaviour", and assert it has seven keys. No attack ever runs.
+> Do not copy that pattern. **Send real attacks at the live system and record what really
+> happened.** Invented evidence in an 80-mark report is a marks risk and an integrity risk.
+> Schedule these for **week 4, after integration**.
+>
+> **Second — the document search code belongs to the team lead.** You are expected to *attack*
+> it and *report* what you find. You must not *edit* it. File an issue; fixes land in the
+> lead's pull requests. Attacker and defender being different people is normal in red-teaming.
+
+---
+
+## 4. Files you own
+
+```
+src/agents/digital_twin/
+src/infrastructure/tools/simulation_tool.py
+tests/unit/test_member3_digital_twin.py
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py
 ```
 
----
+## 5. Do not modify
 
-### Prompt 2: Implement Battery Dynamics (`battery_dynamics.py`)
-Copy and paste this prompt directly into **Claude Code**:
-
-```text
-Please implement `simulate_soc_trajectory()` in `src/agents/digital_twin/battery_dynamics.py`.
-Requirements:
-1. One-way efficiency is sqrt(round_trip_eff) (sqrt(0.92) ≈ 0.959).
-2. Min allowed energy = capacity_kwh * 0.20 (100 kWh for 500 kWh battery).
-3. Max allowed energy = capacity_kwh * 0.90 (450 kWh for 500 kWh battery).
-4. For each 30-min interval:
-   - energy_in = charge_kw * one_way_eff * 0.5
-   - energy_out = (discharge_kw / one_way_eff) * 0.5
-   - current_soc += energy_in - energy_out
-   - If current_soc < min_kwh or current_soc > max_kwh, increment violations.
-5. Return (soc_history, violations).
+```
+src/domain/                                  the shared contracts — ask the lead
+src/application/container.py                 request wiring, do not edit
+src/config/settings.py                       request settings, do not edit
+src/agents/telemetry/  dispatch_explanation/  policy_rag/  coordinator/
+src/infrastructure/tools/weather_tool.py, __init__.py, registry.py
+src/application/services/retrieval_service.py    attack it in tests, never edit
+src/infrastructure/vector_store/                 attack it in tests, never edit
+src/infrastructure/reference_baselines/          read for reference, never edit
 ```
 
----
-
-### Prompt 3: Implement Your 15 Red Team Security Test Cases (Student 4 - 80 Marks)
-Copy and paste this prompt directly into **Claude Code**:
-
-```text
-I am Student 4 conducting the 80-mark AI Security Audit on 'Information Retrieval, Vector Store & Tool Security Assessment' for CampusGrid AI.
-Please implement all 15 adversarial test cases (TC-S4-01 to TC-S4-15) in `tests/red_team_security_audits/test_student4_retrieval_mcp_security.py`.
-
-Every test case MUST follow the mandatory 7-point schema:
-1. test_id (e.g. TC-S4-01, TC-S4-02, ..., TC-S4-15)
-2. test_objective (Vulnerability being tested)
-3. attack_scenario (Exact attack payload, poisoned document, or invalid tool call)
-4. expected_behaviour (Secure response)
-5. actual_behaviour (Observed behavior)
-6. evidence_log (Execution log snippet)
-7. severity_and_mitigation (CVSS score + code fix)
-
-Topics to cover across the 15 test cases:
-- RAG document index poisoning (uploading fake tariff PDFs with 0.05 LKR/kWh).
-- Vector embedding collision and semantic clustering manipulation.
-- Tool/MCP parameter spoofing (commanding -15°C or 5000 kW to overheat inverters).
-- ChromaDB vector store Denial of Service (DoS) with extreme query vectors.
-- Man-In-The-Middle (MITM) interception of unencrypted tool calls (mTLS requirement).
-- BACnet/IP and OpenADR payload tampering.
-```
+Need something wired in, or a new setting exposed? Open an issue titled
+`WIRE: <class> into container`. The team lead makes that edit.
 
 ---
 
-## 5. How to Test and Verify Your Work
+## 6. What you depend on, and what you owe
 
-Open your terminal and run your dedicated test command:
+**From the team lead:** the `BuildingThermalTwinInterface` and `BatteryDynamicsInterface` you
+implement (already in place), configurable comfort and battery limits, and container wiring.
+
+**From Developer 1:** the 48 ambient temperatures and 48 occupancy counts you simulate against.
+
+**You must provide — these shapes are contracts, do not change them without telling the lead:**
+
+| Output | Used by |
+|---|---|
+| 48 simulated indoor temperatures | Team Lead (dashboard) |
+| `comfort_violations_count` and `is_thermal_feasible` | Developer 3 (feasibility constraint) |
+| 48-value battery charge trajectory + violation count | Developer 3, Team Lead |
+
+**Blocked waiting on Developer 1?** You are not. Set `USE_REFERENCE_BASELINES=true` in your
+`.env` and you get working stand-in temperatures and occupancy immediately.
+
+---
+
+## 7. Done means
+
+- [ ] `pytest tests/unit/test_member3_digital_twin.py` passes with **no skips**
+- [ ] A room with 100 students and no cooling **measurably heats up**; a balanced room stays
+      flat — the physics behaves correctly, not merely runs without crashing
+- [ ] There is **exactly one** copy of the 2R2C equations in the codebase
+- [ ] You can state your fitted R and C values and how much they improved accuracy
+- [ ] The simulator is reachable as a real MCP tool and **rejects out-of-range parameters**
+- [ ] All 15 security tests **execute real attacks** and record real observed behaviour
+- [ ] `pytest tests/` fully green
 
 ```bash
 pytest tests/unit/test_member3_digital_twin.py -v
-```
-
-When your code is working correctly, you will see:
-```text
-tests/unit/test_member3_digital_twin.py::test_member3_thermal_model_simulation PASSED [ 33%]
-tests/unit/test_member3_digital_twin.py::test_member3_thermal_occupant_heat_gain PASSED [ 66%]
-tests/unit/test_member3_digital_twin.py::test_member3_battery_soc_tracking PASSED [100%]
-```
-
-To run your security audit test cases:
-```bash
 pytest tests/red_team_security_audits/test_student4_retrieval_mcp_security.py -v
+pytest tests/ -v
 ```
