@@ -1,17 +1,17 @@
 # Documentation Index
 
-> **Looking for the plain-English overview and the build plan?** That is not in here — it is
-> [`../TEAM_GUIDES/START_HERE.md`](../TEAM_GUIDES/START_HERE.md). Start there. The documents
-> below are the formal specification and the coursework requirements.
+> **New here? Start with [`ARCHITECTURE.md`](ARCHITECTURE.md).** It is the complete guide — the
+> system, the agents, the technologies, what is built, who does what, and how we work.
+> The remaining documents are the formal specification and the coursework requirements.
 
-Four documents live here and they serve different purposes. Read the one you need.
+These four documents serve different purposes. Read the one you need.
 
 | Document | What it is | Read it when |
 |---|---|---|
+| **`ARCHITECTURE.md`** | **The master reference.** How the system works, how each agent behaves, how the technologies (LLM, embeddings, vector database, RAG, ML, solver) fit together and connect in our code, what is built vs missing, and the full four-person plan with build order. | **Start here.** It is the only document you need to begin work. |
 | **`CAMPUSGRID_AI_SIMPLIFIED_SRS_AND_SYSTEM_GUIDE.md`** | The working system guide, in seven focused views: the problem, the architecture, the four agents, the tech stack, the offline pipelines, the codebase layout, and team delegation. | You want the formal technical detail behind the plain-English overview. |
 | **`CAMPUSGRID_AI_MASTER_ARCHITECTURAL_BLUEPRINT_AND_SRS.md`** | The long-form SRS. Everything in the guide above, plus the mathematical formulations, the commercialization plan with LKR pricing, and an 18-question viva preparation section. | You are writing the final report or preparing for the viva. |
 | **`04_COURSEWORK_SPECIFICATIONS_AND_RUBRICS.md`** | The assignment requirements, mark allocations, the four individual security-audit specialisations, and the mandatory 7-point test case schema. | You want to know what you are graded on. |
-| **`CampusGrid_AI_Architecture_Stack.pdf`** | An early architecture diagram. **Not maintained** — it predates the `src/` Clean Architecture refactor and cannot be corrected in place. | Historical reference only. Trust the markdown above it. |
 
 ---
 

@@ -5,10 +5,11 @@
 **Preferred GitHub Repository Name:** `campusgrid-ai`  
 **System Version:** Production v4.2  
 
-> ### 👉 New to this project? Read [`TEAM_GUIDES/START_HERE.md`](TEAM_GUIDES/START_HERE.md) first.
-> It explains in plain English what we are building, how the four agents work together,
-> what is already done, what each team member is responsible for, and the week-by-week plan.
-> This README covers installing and running the system.
+> ### 👉 New to this project? Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first.
+> It is the complete guide in plain English: what we are building, how the four agents work,
+> which technologies we use and why, what is already done, what each team member is responsible
+> for, the week-by-week plan, and how we work day to day.
+> This README covers only installing and running the system.
 
 ---
 
