@@ -8,7 +8,11 @@ from src.agents.base.agent import BaseAgent
 from src.domain.interfaces.repositories import MeterHistoryRepository, TimetableRepository
 from src.domain.interfaces.tool import Tool
 from src.domain.interfaces.forecaster import DemandForecasterInterface
+from src.domain.interfaces.llm import LLMProvider
+from src.domain.entities.telemetry import TelemetryInterval
 from src.agents.telemetry.forecaster import DemandForecaster
+from src.agents.telemetry.summary import build_forecast_summary
+from src.agents.telemetry.privacy import add_privacy_noise_batch
 
 class TelemetryForecastingAgent(BaseAgent):
     """Agent 1: Predicts day-ahead electricity demand and solar generation."""
@@ -18,7 +22,8 @@ class TelemetryForecastingAgent(BaseAgent):
         meter_repo: MeterHistoryRepository,
         timetable_repo: TimetableRepository,
         weather_tool: Tool,
-        forecaster: Optional[DemandForecasterInterface] = None
+        forecaster: Optional[DemandForecasterInterface] = None,
+        llm_provider: Optional[LLMProvider] = None
     ):
         super().__init__(
             name="Agent 1: Telemetry & Forecasting",
@@ -28,6 +33,9 @@ class TelemetryForecastingAgent(BaseAgent):
         self.timetable_repo = timetable_repo
         self.weather_tool = weather_tool
         self.forecaster = forecaster or DemandForecaster()
+        # Optional: enables the one-sentence forecast summary (NLP "summarisation" mark).
+        # Agent 1 works identically without it — see build_forecast_summary().
+        self.llm_provider = llm_provider
 
     def _run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         target_date = input_data.get("date", "2026-09-06")
@@ -49,6 +57,16 @@ class TelemetryForecastingAgent(BaseAgent):
         # 4. Compute forecast
         forecast = self.forecaster.predict(historical, temp_series, occupancies)
 
+        # 5. Plain-English forecast summary (one LLM call; every number in it comes
+        #    from `forecast` above, never from the model's own memory).
+        forecast_summary = build_forecast_summary(
+            llm_provider=self.llm_provider,
+            time_slots=forecast.time_slots,
+            forecast_demand_kw=forecast.forecast_demand_kw,
+            temperature_series_c=temp_series,
+            anomaly_indices=forecast.anomaly_indices,
+        )
+
         return {
             "target_date": target_date,
             "time_slots": forecast.time_slots,
@@ -59,5 +77,21 @@ class TelemetryForecastingAgent(BaseAgent):
             "ambient_temperatures_c": temp_series,
             "occupancy_counts": occupancies,
             "anomaly_count": len(forecast.anomaly_indices),
-            "tariffs_lkr_kwh": [item.grid_tariff_lkr_kwh for item in historical]
+            "tariffs_lkr_kwh": [item.grid_tariff_lkr_kwh for item in historical],
+            "forecast_summary": forecast_summary,
         }
+
+    def get_privacy_protected_export(
+        self,
+        target_date: str,
+        epsilon: float = 1.0
+    ) -> List[TelemetryInterval]:
+        """
+        Returns the day's meter history with calibrated differential-privacy (Laplace)
+        noise applied, for any consumer outside this agent's trust boundary (dashboards,
+        analytics exports, third-party reports). Internal forecasting never calls this —
+        `_run()` always uses the raw historical profile, so noise added for external
+        sharing never degrades the forecaster's own accuracy.
+        """
+        historical = self.meter_repo.get_historical_profile(target_date)
+        return add_privacy_noise_batch(historical, epsilon=epsilon)
