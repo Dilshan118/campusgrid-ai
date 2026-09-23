@@ -71,6 +71,24 @@ class DigitalTwinAgent(BaseAgent):
                 max_deviation_c = max(max_deviation_c, comfort_min - t, t - comfort_max)
         is_feasible = (comfort_violations == 0)
 
+        # Battery safety check. Callers that only care about thermal feasibility (e.g.
+        # the existing what-if API route) do not supply a charge/discharge plan — default
+        # to an idle battery (no activity) so the SOC trajectory is still returned, flat
+        # and violation-free, rather than silently skipped.
+        battery_capacity_kwh = get_settings().physics.battery_capacity_kwh
+        battery_initial_soc_kwh = float(
+            input_data.get("battery_initial_soc_kwh", battery_capacity_kwh * 0.5)
+        )
+        battery_charge_kw = input_data.get("battery_charge_kw", [0.0] * len(perturbed_ambients))
+        battery_discharge_kw = input_data.get("battery_discharge_kw", [0.0] * len(perturbed_ambients))
+
+        battery_soc_trajectory_kwh, battery_soc_violations_count = self.battery_dynamics.simulate_soc_trajectory(
+            initial_soc_kwh=battery_initial_soc_kwh,
+            charge_kw_series=battery_charge_kw,
+            discharge_kw_series=battery_discharge_kw,
+        )
+        is_battery_feasible = (battery_soc_violations_count == 0)
+
         return {
             "initial_temperature_c": initial_temp,
             "simulated_indoor_temps_c": indoor_temps,
@@ -81,6 +99,9 @@ class DigitalTwinAgent(BaseAgent):
             "is_thermal_feasible": is_feasible,
             "max_temp_deviation_c": round(max_deviation_c, 2),
             "comfort_limits": {"min_c": comfort_min, "max_c": comfort_max},
+            "battery_soc_trajectory_kwh": battery_soc_trajectory_kwh,
+            "battery_soc_violations_count": battery_soc_violations_count,
+            "is_battery_feasible": is_battery_feasible,
             "perturbation_applied": {
                 "temp_delta_c": temp_delta,
                 "occupancy_multiplier": occ_multiplier,
@@ -93,17 +114,27 @@ class DigitalTwinAgent(BaseAgent):
         initial_temp_c: float,
         ambient_temperatures_c: List[float],
         occupancy_counts: List[int],
-        hvac_power_kw: Optional[List[float]] = None
+        hvac_power_kw: Optional[List[float]] = None,
+        battery_initial_soc_kwh: Optional[float] = None,
+        battery_charge_kw: Optional[List[float]] = None,
+        battery_discharge_kw: Optional[List[float]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Runs the three required what-if scenarios against one baseline forecast:
         a heatwave, a crowd surge, and a solar dropout. Each result reports whether the
-        building stays inside the comfort band and, if not, the worst deviation."""
+        building stays inside the comfort band and the battery stays inside its SOC
+        band, and if not, by how much either misses."""
         baseline = {
             "initial_temp_c": initial_temp_c,
             "ambient_temperatures_c": ambient_temperatures_c,
             "occupancy_counts": occupancy_counts,
             "hvac_power_kw": hvac_power_kw or [],
         }
+        if battery_initial_soc_kwh is not None:
+            baseline["battery_initial_soc_kwh"] = battery_initial_soc_kwh
+        if battery_charge_kw is not None:
+            baseline["battery_charge_kw"] = battery_charge_kw
+        if battery_discharge_kw is not None:
+            baseline["battery_discharge_kw"] = battery_discharge_kw
 
         scenarios = {
             "heatwave": {**baseline, "perturb_temp_delta_c": 4.0},
