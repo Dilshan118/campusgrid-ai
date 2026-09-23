@@ -16,15 +16,21 @@ RESPONSIBILITIES:
 """
 
 import time
-from typing import List, Dict, Any, Tuple
+from typing import List
 import pulp
 from src.domain.entities.optimization import OptimizationInput, OptimizationResult, BindingConstraint
-from src.domain.exceptions.base import InfeasibleOptimizationError
+from src.domain.exceptions.base import DomainException, InfeasibleOptimizationError
 from src.domain.interfaces.optimizer import MicrogridOptimizerInterface
+
+# Tolerance (kW / kWh) for treating a variable as "at its bound" when reporting
+# binding constraints. Mirrors the reference baseline's own use of a flat 0.5
+# margin rather than exact floating-point equality.
+_BOUND_TOLERANCE = 0.5
+
 
 class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
     """
-    Deterministic PuLP Linear / MILP Optimization Solver.
+    Deterministic PuLP Mixed-Integer Optimization Solver.
     Assigned to: Member 4
     """
 
@@ -34,36 +40,180 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
 
     def solve(self, opt_input: OptimizationInput) -> OptimizationResult:
         """
-        Solves the microgrid dispatch problem over T time intervals.
-
-        # =========================================================================
-        # TODO (Member 4: Mixed-Integer Linear Programming Dispatch):
-        # Formulate and solve your PuLP optimization model here!
-        #
-        # STEPS TO IMPLEMENT:
-        # 1. Initialize PuLP problem: pulp.LpProblem("Campus_Microgrid_Dispatch", pulp.LpMinimize).
-        # 2. Define decision variables across T = len(opt_input.time_slots) intervals:
-        #    - grid_kw[t] >= 0
-        #    - 0 <= charge_kw[t] <= opt_input.max_charge_rate_kw
-        #    - 0 <= discharge_kw[t] <= opt_input.max_discharge_rate_kw
-        #    - min_soc <= soc_kwh[t] <= max_soc
-        #    - peak_grid_kw >= 0
-        # 3. Add objective function:
-        #    - sum(grid_kw[t] * tariff[t] * dt) + peak_grid_kw * (penalty / 30.0)
-        # 4. Add constraints for each t:
-        #    - Power Balance: grid + solar + discharge >= base_load + charge
-        #    - Peak Tracking: peak_grid_kw >= grid_kw[t]
-        #    - SOC Continuity: soc[t] == soc[t-1] + (charge * eta - discharge / eta) * dt
-        # 5. Solve using pulp.PULP_CBC_CMD(msg=False).
-        # 6. Verify status is 'Optimal'; compute baseline vs optimized cost and net savings.
-        # 7. Package results into `OptimizationResult` entity.
-        #
-        # NOTE: A fully working baseline reference is available for guidance in:
-        # `src/infrastructure/reference_baselines/baseline_milp.py`
-        # =========================================================================
+        Formulates and solves the 48-interval microgrid dispatch problem as a
+        genuine MILP: continuous power/SOC variables plus a binary per interval
+        that forces the battery to either charge or discharge, never both.
         """
-        raise NotImplementedError(
-            "Member 4: Please implement CampusMicrogridOptimizer.solve() in "
-            "src/agents/dispatch_explanation/milp_solver.py. "
-            "See TEAM_GUIDES/MEMBER_4_OPTIMIZATION_AND_RESPONSIBLE_AI_GUIDE.md for details and Claude Code prompts."
+        start_time = time.perf_counter()
+
+        T = len(opt_input.time_slots)
+        if not (len(opt_input.base_load_kw) == T
+                and len(opt_input.solar_gen_kw) == T
+                and len(opt_input.grid_tariff_lkr_kwh) == T):
+            raise DomainException(
+                message=(
+                    "OptimizationInput series length mismatch: "
+                    f"time_slots={T}, base_load_kw={len(opt_input.base_load_kw)}, "
+                    f"solar_gen_kw={len(opt_input.solar_gen_kw)}, "
+                    f"grid_tariff_lkr_kwh={len(opt_input.grid_tariff_lkr_kwh)}"
+                ),
+                error_code="OPTIMIZATION_INPUT_INVALID",
+                details={
+                    "time_slots_len": T,
+                    "base_load_kw_len": len(opt_input.base_load_kw),
+                    "solar_gen_kw_len": len(opt_input.solar_gen_kw),
+                    "grid_tariff_lkr_kwh_len": len(opt_input.grid_tariff_lkr_kwh),
+                },
+            )
+
+        dt = 0.5  # 30-minute interval, matches the project's 48-interval horizon
+
+        prob = pulp.LpProblem("Campus_Microgrid_Dispatch", pulp.LpMinimize)
+
+        # --- Continuous decision variables ---
+        # grid_kw: power imported from the utility grid, per interval.
+        grid_kw = [pulp.LpVariable(f"grid_{t}", lowBound=0.0) for t in range(T)]
+        # charge_kw / discharge_kw: battery power flow, bounded by the rated
+        # max charge/discharge rate from the request.
+        charge_kw = [
+            pulp.LpVariable(f"charge_{t}", lowBound=0.0, upBound=opt_input.max_charge_rate_kw)
+            for t in range(T)
+        ]
+        discharge_kw = [
+            pulp.LpVariable(f"discharge_{t}", lowBound=0.0, upBound=opt_input.max_discharge_rate_kw)
+            for t in range(T)
+        ]
+        # soc_kwh: battery state of charge, hard-bounded to the 20%-90% safe
+        # band by construction (variable bounds, not a separate constraint).
+        soc_kwh = [
+            pulp.LpVariable(
+                f"soc_{t}",
+                lowBound=opt_input.battery_capacity_kwh * opt_input.min_soc_ratio,
+                upBound=opt_input.battery_capacity_kwh * opt_input.max_soc_ratio,
+            )
+            for t in range(T)
+        ]
+        # peak_grid_kw: single scalar tracking the worst interval's grid draw,
+        # which the monthly demand penalty is charged against.
+        peak_grid = pulp.LpVariable("peak_grid_kw", lowBound=0.0)
+
+        # --- Binary decision variable (this is what makes the model a MILP) ---
+        # is_charging[t] = 1 -> battery may charge, discharge forced to 0.
+        # is_charging[t] = 0 -> battery may discharge, charge forced to 0.
+        is_charging = [pulp.LpVariable(f"is_charging_{t}", cat="Binary") for t in range(T)]
+
+        eta = opt_input.round_trip_efficiency ** 0.5  # one-way efficiency
+        initial_soc = opt_input.battery_capacity_kwh * opt_input.initial_soc_ratio
+
+        # --- Objective: energy import cost + peak demand surcharge ---
+        energy_cost = pulp.lpSum(
+            grid_kw[t] * opt_input.grid_tariff_lkr_kwh[t] * dt for t in range(T)
+        )
+        peak_surcharge = peak_grid * (opt_input.peak_demand_penalty_lkr_kva / 30.0)
+        prob += energy_cost + peak_surcharge
+
+        for t in range(T):
+            # Power balance: supply (grid + solar + battery discharge) must
+            # cover demand (base load + battery charge) at every interval.
+            prob += (
+                grid_kw[t] + opt_input.solar_gen_kw[t] + discharge_kw[t]
+                >= opt_input.base_load_kw[t] + charge_kw[t]
+            ), f"Power_Balance_{t}"
+
+            # Peak tracking: peak_grid is pushed to the max grid_kw[t] because
+            # it carries a positive cost in the objective above.
+            prob += (peak_grid >= grid_kw[t]), f"Peak_Tracking_{t}"
+
+            # SOC transition: charging adds energy at efficiency eta, discharging
+            # removes energy at a loss (divided by eta).
+            prev_soc = initial_soc if t == 0 else soc_kwh[t - 1]
+            prob += (
+                soc_kwh[t] == prev_soc + (charge_kw[t] * eta - discharge_kw[t] / eta) * dt
+            ), f"SOC_Continuity_{t}"
+
+            # Charge/discharge mutual exclusivity, enforced by the binary
+            # variable: whichever mode is off has its rate forced to zero.
+            prob += charge_kw[t] <= opt_input.max_charge_rate_kw * is_charging[t], f"Charge_Exclusivity_{t}"
+            prob += (
+                discharge_kw[t] <= opt_input.max_discharge_rate_kw * (1 - is_charging[t])
+            ), f"Discharge_Exclusivity_{t}"
+
+        solver = pulp.PULP_CBC_CMD(msg=False)
+        status = prob.solve(solver)
+        solver_status = pulp.LpStatus[status]
+
+        if solver_status != "Optimal":
+            raise InfeasibleOptimizationError(
+                message=f"MILP solver terminated with non-optimal status: {solver_status}",
+                details={"solver_status": solver_status},
+            )
+
+        res_grid = [round(float(pulp.value(grid_kw[t])), 2) for t in range(T)]
+        res_charge = [round(float(pulp.value(charge_kw[t])), 2) for t in range(T)]
+        res_discharge = [round(float(pulp.value(discharge_kw[t])), 2) for t in range(T)]
+        res_soc = [round(float(pulp.value(soc_kwh[t])), 2) for t in range(T)]
+
+        opt_cost = sum(res_grid[t] * opt_input.grid_tariff_lkr_kwh[t] * dt for t in range(T))
+        baseline_cost = sum(
+            max(0.0, opt_input.base_load_kw[t] - opt_input.solar_gen_kw[t]) * opt_input.grid_tariff_lkr_kwh[t] * dt
+            for t in range(T)
+        )
+
+        net_savings = max(0.0, baseline_cost - opt_cost)
+        savings_pct = (net_savings / baseline_cost * 100.0) if baseline_cost > 0 else 0.0
+
+        peak_base = max(max(0.0, opt_input.base_load_kw[t] - opt_input.solar_gen_kw[t]) for t in range(T))
+        peak_opt = max(res_grid)
+
+        min_soc_kwh = opt_input.battery_capacity_kwh * opt_input.min_soc_ratio
+        max_soc_kwh = opt_input.battery_capacity_kwh * opt_input.max_soc_ratio
+
+        binding: List[BindingConstraint] = []
+        for t in range(T):
+            if res_discharge[t] >= opt_input.max_discharge_rate_kw - _BOUND_TOLERANCE:
+                binding.append(BindingConstraint(
+                    name="Max Discharge Rate",
+                    time_slot=opt_input.time_slots[t],
+                    threshold=opt_input.max_discharge_rate_kw,
+                    actual_value=res_discharge[t],
+                ))
+            if res_charge[t] >= opt_input.max_charge_rate_kw - _BOUND_TOLERANCE:
+                binding.append(BindingConstraint(
+                    name="Max Charge Rate",
+                    time_slot=opt_input.time_slots[t],
+                    threshold=opt_input.max_charge_rate_kw,
+                    actual_value=res_charge[t],
+                ))
+            if res_soc[t] <= min_soc_kwh + _BOUND_TOLERANCE:
+                binding.append(BindingConstraint(
+                    name="Min SOC Reached",
+                    time_slot=opt_input.time_slots[t],
+                    threshold=min_soc_kwh,
+                    actual_value=res_soc[t],
+                ))
+            if res_soc[t] >= max_soc_kwh - _BOUND_TOLERANCE:
+                binding.append(BindingConstraint(
+                    name="Max SOC Reached",
+                    time_slot=opt_input.time_slots[t],
+                    threshold=max_soc_kwh,
+                    actual_value=res_soc[t],
+                ))
+
+        solve_duration_ms = (time.perf_counter() - start_time) * 1000.0
+
+        return OptimizationResult(
+            time_slots=opt_input.time_slots,
+            optimized_grid_kw=res_grid,
+            battery_charge_kw=res_charge,
+            battery_discharge_kw=res_discharge,
+            battery_soc_kwh=res_soc,
+            baseline_cost_lkr=round(baseline_cost, 2),
+            optimized_cost_lkr=round(opt_cost, 2),
+            net_savings_lkr=round(net_savings, 2),
+            savings_percentage=round(savings_pct, 1),
+            peak_demand_baseline_kw=round(peak_base, 1),
+            peak_demand_optimized_kw=round(peak_opt, 1),
+            solver_status=solver_status,
+            solve_time_ms=solve_duration_ms,
+            binding_constraints=binding[:5],
         )
