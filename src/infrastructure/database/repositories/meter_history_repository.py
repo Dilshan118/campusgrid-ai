@@ -13,6 +13,7 @@ backend/data/init.sql now mirrors TelemetryInterval field-for-field.
 import os
 import csv
 from typing import List, Optional
+from sqlalchemy import text
 from src.domain.interfaces.repositories import MeterHistoryRepository
 from src.domain.entities.telemetry import TelemetryInterval
 
@@ -78,4 +79,77 @@ class InMemoryMeterHistoryRepository(MeterHistoryRepository):
 
     def append_reading(self, reading: TelemetryInterval) -> bool:
         self._records.append(reading)
+        return True
+
+
+class PostgresMeterHistoryRepository(MeterHistoryRepository):
+    """
+    PostgreSQL implementation of MeterHistoryRepository, backed by the
+    `meter_history` table defined in `backend/data/init.sql`. Column names mirror
+    `TelemetryInterval` field-for-field, so rows round-trip without translation.
+
+    Falls back to the in-memory CSV-seeded store if the table is empty for the
+    requested date (e.g. a freshly-provisioned database before any real meter
+    data has been ingested), so the system degrades gracefully instead of
+    returning an empty forecast.
+    """
+
+    def __init__(self, engine, fallback: Optional[MeterHistoryRepository] = None):
+        self.engine = engine
+        self._fallback = fallback or InMemoryMeterHistoryRepository()
+
+    def get_historical_profile(self, date_str: str) -> List[TelemetryInterval]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT time_slot, base_load_kw, solar_gen_kw, outdoor_temp_c, "
+                    "grid_tariff_lkr_kwh, zone_occupancy_count "
+                    "FROM meter_history WHERE reading_date = :date "
+                    "ORDER BY time_slot;"
+                ),
+                {"date": date_str}
+            ).fetchall()
+
+        if not rows:
+            return self._fallback.get_historical_profile(date_str)
+
+        return [
+            TelemetryInterval(
+                time_slot=r[0],
+                base_load_kw=r[1],
+                solar_gen_kw=r[2],
+                outdoor_temp_c=r[3],
+                grid_tariff_lkr_kwh=r[4],
+                zone_occupancy_count=r[5],
+            )
+            for r in rows
+        ]
+
+    def append_reading(self, reading: TelemetryInterval, reading_date: Optional[str] = None) -> bool:
+        import datetime
+        date_str = reading_date or datetime.date.today().isoformat()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO meter_history "
+                    "(reading_date, time_slot, base_load_kw, solar_gen_kw, outdoor_temp_c, "
+                    "grid_tariff_lkr_kwh, zone_occupancy_count) "
+                    "VALUES (:date, :slot, :load, :solar, :temp, :tariff, :occ) "
+                    "ON CONFLICT (reading_date, time_slot) DO UPDATE SET "
+                    "base_load_kw = EXCLUDED.base_load_kw, "
+                    "solar_gen_kw = EXCLUDED.solar_gen_kw, "
+                    "outdoor_temp_c = EXCLUDED.outdoor_temp_c, "
+                    "grid_tariff_lkr_kwh = EXCLUDED.grid_tariff_lkr_kwh, "
+                    "zone_occupancy_count = EXCLUDED.zone_occupancy_count;"
+                ),
+                {
+                    "date": date_str,
+                    "slot": reading.time_slot,
+                    "load": reading.base_load_kw,
+                    "solar": reading.solar_gen_kw,
+                    "temp": reading.outdoor_temp_c,
+                    "tariff": reading.grid_tariff_lkr_kwh,
+                    "occ": reading.zone_occupancy_count,
+                }
+            )
         return True
