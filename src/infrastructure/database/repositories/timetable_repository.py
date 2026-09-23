@@ -9,7 +9,8 @@ the in-memory seed even when DATABASE_PROVIDER=postgres. Adding it is Developer 
 task; the `timetables` table it should read is already defined in backend/data/init.sql.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from sqlalchemy import text
 from src.domain.interfaces.repositories import TimetableRepository
 
 
@@ -34,4 +35,59 @@ class InMemoryTimetableRepository(TimetableRepository):
             if s["room_id"] == room_id and s["day_of_week"] == day_of_week:
                 if s["start_time"] <= time_slot <= s["end_time"]:
                     return s["expected_students"]
+        return 0
+
+
+class PostgresTimetableRepository(TimetableRepository):
+    """
+    PostgreSQL implementation of TimetableRepository, backed by the `timetables`
+    table in `backend/data/init.sql`. `start_time`/`end_time` are stored as SQL
+    TIME columns; comparisons against `time_slot` ("HH:MM") work directly because
+    Postgres TIME's string form is lexically comparable to zero-padded HH:MM.
+    """
+
+    def __init__(self, engine, fallback: Optional[TimetableRepository] = None):
+        self.engine = engine
+        self._fallback = fallback or InMemoryTimetableRepository()
+
+    def get_schedule_for_day(self, day_of_week: int) -> List[Dict[str, Any]]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT schedule_id, room_id, course_code, day_of_week, "
+                    "start_time, end_time, expected_students "
+                    "FROM timetables WHERE day_of_week = :dow ORDER BY start_time;"
+                ),
+                {"dow": day_of_week}
+            ).fetchall()
+
+        if not rows:
+            return self._fallback.get_schedule_for_day(day_of_week)
+
+        return [
+            {
+                "schedule_id": r[0],
+                "room_id": r[1],
+                "course_code": r[2],
+                "day_of_week": r[3],
+                "start_time": str(r[4])[:5],
+                "end_time": str(r[5])[:5],
+                "expected_students": r[6],
+            }
+            for r in rows
+        ]
+
+    def get_room_occupancy(self, room_id: str, time_slot: str, day_of_week: int) -> int:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT expected_students FROM timetables "
+                    "WHERE room_id = :room AND day_of_week = :dow "
+                    "AND start_time <= :slot AND end_time >= :slot "
+                    "LIMIT 1;"
+                ),
+                {"room": room_id, "dow": day_of_week, "slot": time_slot}
+            ).fetchone()
+        if row is not None:
+            return int(row[0])
         return 0
