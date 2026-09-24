@@ -150,7 +150,19 @@ Open `.env` and fill in:
    ```bash
    npm run dev
    ```
-3. Open your browser at `http://localhost:5173`.
+3. Open your browser at `http://localhost:5173` and sign in with one of the demo accounts above
+   (development builds list them under the sign-in form). The dev server forwards `/api` to the
+   backend on port 8000, so start the backend first.
+4. Production build: `npm run build` (output in `frontend/dist/`). Optional build-time settings:
+
+   | Variable | Effect |
+   |---|---|
+   | `VITE_API_URL` | Backend base URL when the dashboard is not served from the same host (default: same origin) |
+   | `VITE_SHOW_DEMO_ACCOUNTS=true` | Show the demo-account helper in a production build (always shown in development) |
+   | `VITE_EXCLUDE_DEMO_ANALYTICS=true` | Do not send analytics events for the three demo accounts |
+
+   What each page does and who can see it is described in
+   [`docs/SYSTEM_USER_FLOW_AND_UIUX_SPEC.md`](docs/SYSTEM_USER_FLOW_AND_UIUX_SPEC.md).
 
 ---
 
