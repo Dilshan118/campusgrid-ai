@@ -72,3 +72,6 @@ class MemoryVectorStore(VectorStore):
 
     def count(self) -> int:
         return len(self._documents)
+
+    def list_documents(self) -> List[DocumentClause]:
+        return [doc.model_copy(update={"embedding": None}) for doc in self._documents.values()]
