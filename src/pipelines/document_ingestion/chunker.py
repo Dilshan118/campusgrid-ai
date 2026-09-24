@@ -93,3 +93,49 @@ class RegulatoryDocumentChunker:
 
 
         return clauses
+
+    # Headings as they appear in extracted PDF / plain text: "Clause 4.1: Peak ...", "Section 5.3 - ...".
+    _PLAIN_HEADING = re.compile(
+        r"^\s*((?:Clause|Section|Article|Schedule)\s+\d+(?:\.\d+)*)\s*[:\-–.]?\s*(.*)$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    def parse_plain_text(self, text: str, source_document: str, effective_date: str = "2024-01-01") -> List[DocumentClause]:
+        """Splits extracted PDF / plain text into clauses on 'Clause x.y' / 'Section x.y' headings."""
+        content = strip_page_furniture(text)
+        matches = list(self._PLAIN_HEADING.finditer(content))
+        if not matches:
+            return self.parse_markdown(content, default_source=source_document)
+
+        clauses: List[DocumentClause] = []
+        for i, match in enumerate(matches):
+            ref, title = match.group(1).strip(), match.group(2).strip()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            body = " ".join(line.strip() for line in content[match.end():end].splitlines() if line.strip())
+            if not body:
+                continue
+            clauses.append(DocumentClause(
+                id=len(clauses) + 1,
+                source_document=source_document,
+                clause_reference=f"{ref} - {title}" if title else ref,
+                section_title=title or ref,
+                content=body,
+                effective_date=effective_date,
+            ))
+        return clauses
+
+
+def strip_page_furniture(text: str) -> str:
+    """Drops page numbers and header/footer lines that repeat on many pages of an extracted PDF."""
+    pages = text.split("\f")
+    repeated = set()
+    if len(pages) >= 3:
+        counts: Dict[str, int] = {}
+        for page in pages:
+            for line in {l.strip() for l in page.splitlines() if l.strip()}:
+                counts[line] = counts.get(line, 0) + 1
+        repeated = {line for line, n in counts.items() if n >= max(3, len(pages) // 2)}
+
+    page_number = re.compile(r"^(?:page\s*)?\d+(?:\s*(?:of|/)\s*\d+)?$", re.IGNORECASE)
+    lines = [line.strip() for line in text.replace("\f", "\n").splitlines()]
+    return "\n".join(line for line in lines if line not in repeated and not page_number.match(line))
