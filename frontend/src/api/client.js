@@ -1,83 +1,94 @@
-import axios from 'axios';
+// Thin fetch wrapper around the CampusGrid API. Every failure becomes an ApiError carrying the
+// server's error_code, message, details and X-Request-ID, so screens can react per spec §8.
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  timeout: 30000,
-});
+let accessToken = null;
+let onUnauthorized = () => {};
 
-// Attach JWT token if available in localStorage
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('campusgrid_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+export function setAccessToken(token) { accessToken = token; }
+export function setUnauthorizedHandler(handler) { onUnauthorized = handler; }
+
+export class ApiError extends Error {
+  constructor({ status, code, message, details = {}, requestId = null }) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+    this.requestId = requestId;
   }
-  return config;
-});
+}
+
+async function request(method, path, { body, query, auth = true, signal, raw = false } = {}) {
+  const url = new URL(`${BASE_URL}${path}`, window.location.origin);
+  Object.entries(query || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+  });
+
+  const headers = { Accept: 'application/json' };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (auth && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method, headers, signal, body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    throw new ApiError({ status: 0, code: 'NETWORK_ERROR', message: "Can't reach CampusGrid. Check your connection." });
+  }
+
+  const requestId = response.headers.get('X-Request-ID');
+  let payload = null;
+  try { payload = await response.json(); } catch { payload = null; }
+
+  // `raw` callers get the whole body for a 200 with success:false (e.g. an upload where every clause was rejected).
+  if (!response.ok || (!raw && payload && payload.success === false)) {
+    const error = new ApiError({
+      status: response.status,
+      code: payload?.error_code || `HTTP_${response.status}`,
+      message: payload?.message || payload?.error || 'Something went wrong on our side.',
+      details: payload?.details || {},
+      requestId,
+    });
+    if (response.status === 401 && auth) onUnauthorized(error);
+    throw error;
+  }
+  if (raw) return payload;
+  return path === '/api/health' ? payload : payload?.data;
+}
 
 export const api = {
-  // Auth
-  login: (username, password) => apiClient.post('/api/auth/login', { username, password }),
-  getProfile: () => apiClient.get('/api/auth/me'),
+  // Authentication
+  login: (username, password) => request('POST', '/api/auth/login', { body: { username, password }, auth: false }),
+  logout: () => request('POST', '/api/auth/logout'),
+  me: () => request('GET', '/api/auth/me'),
+  health: () => request('GET', '/api/health', { auth: false }),
 
-  // Health
-  getHealth: () => apiClient.get('/api/health'),
+  // Planning
+  ask: (payload, signal) => request('POST', '/api/orchestrator/query', { body: payload, signal }),
+  dispatch: (payload) => request('POST', '/api/optimizer/dispatch', { body: payload }),
+  whatIf: (payload) => request('POST', '/api/simulation/what-if', { body: payload }),
+  forecast: (date, room) => request('GET', '/api/telemetry/forecast', { query: { date, room } }),
+  historical: (date) => request('GET', '/api/telemetry/historical', { query: { date } }),
+  rooms: () => request('GET', '/api/campus/rooms'),
 
-  // Orchestrator
-  queryOrchestrator: (query, userId = 'facility_director', perturb = {}) =>
-    apiClient.post('/api/orchestrator/query', {
-      query,
-      user_id: userId,
-      perturb_temp_delta_c: perturb.temp_delta || 0.0,
-      perturb_occ_multiplier: perturb.occ_multiplier || 1.0,
-    }),
+  // Regulations
+  searchRegulations: (query, topK, sessionId) =>
+    request('POST', '/api/rag/search', { body: { query, top_k: topK, session_id: sessionId } }),
+  regulationLibrary: () => request('GET', '/api/rag/documents'),
+  ingestRegulation: (payload) => request('POST', '/api/rag/ingest', { body: payload, raw: true }),
 
-  // Telemetry
-  getTelemetryForecast: (date = '2026-09-06', room = 'LH-1', building = 'Main Academic Complex') =>
-    apiClient.get('/api/telemetry/forecast', { params: { date, room, building } }),
-
-  // Simulation
-  runSimulation: (initialTemp = 24.0, deltaTemp = 0.0, occMultiplier = 1.0) =>
-    apiClient.post('/api/simulation/what-if', {
-      initial_temp_c: initialTemp,
-      ambient_temp_delta_c: deltaTemp,
-      occupancy_multiplier: occMultiplier,
-    }),
-
-  // Optimization
-  runOptimization: (params = {}) =>
-    apiClient.post('/api/optimizer/dispatch', {
-      battery_capacity_kwh: params.capacity || 500.0,
-      max_charge_rate_kw: params.maxCharge || 100.0,
-      max_discharge_rate_kw: params.maxDischarge || 100.0,
-      initial_soc_ratio: params.initialSoc || 0.5,
-    }),
-
-  // RAG Knowledge Base
-  searchRAG: (query, topK = 2) =>
-    apiClient.post('/api/rag/search', { query, top_k: topK }),
-  ingestDocument: (text, sourceDocument = 'Custom Regulation', effectiveDate = '2024-01-01') =>
-    apiClient.post('/api/rag/ingest', {
-      text,
-      source_document: sourceDocument,
-      effective_date: effectiveDate,
-    }),
-
-  // Audit
-  getAuditLogs: (limit = 20) => apiClient.get('/api/audit/logs', { params: { limit } }),
-  approveAudit: (logId, approved = true, notes = '') =>
-    apiClient.post('/api/audit/approve', {
-      log_id: logId,
-      approved,
-      operator_notes: notes,
-    }),
+  // Audit & approvals
+  auditLogs: (params) => request('GET', '/api/audit/logs', { query: params }),
+  auditRecord: (id) => request('GET', `/api/audit/logs/${encodeURIComponent(id)}`),
+  pending: (limit = 100) => request('GET', '/api/audit/pending', { query: { limit } }),
+  decide: (payload) => request('POST', '/api/audit/approve', { body: payload }),
+  verifyAudit: () => request('GET', '/api/audit/verify'),
 
   // Analytics
-  getAnalytics: () => apiClient.get('/api/analytics/summary'),
+  trackEvent: (event) => request('POST', '/api/analytics/event', { body: event }),
+  abAssignment: () => request('GET', '/api/analytics/ab/assignment'),
+  analyticsSummary: () => request('GET', '/api/analytics/summary'),
 };
-
-export default api;
