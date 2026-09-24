@@ -33,28 +33,11 @@ class BuildingThermalTwin(BuildingThermalTwinInterface):
         hvac_power_kw: List[float],
         dt_hours: float = 0.5
     ) -> List[float]:
-        """
-        Runs the continuous thermal differential equation across time intervals.
-
-        # =========================================================================
-        # TODO (Member 3: 2R2C Grey-Box Physics):
-        # Implement your thermal physics simulation here!
-        #
-        # STEPS TO IMPLEMENT:
-        # 1. Start with `temp_history = [initial_temp_c]`.
-        # 2. For each time step (zip ambient_temps, occupant_counts, hvac_power_kw):
-        #    a. Calculate occupant heat gain: Q_occ = occupants * 0.10 kW (100W/person).
-        #    b. Calculate envelope heat transfer: Q_transfer = (T_amb - current_temp) / r_vent.
-        #    c. Compute temperature change delta_t:
-        #       delta_t = (Q_transfer + Q_occ - Q_hvac) * (dt_hours / c_in).
-        #    d. Update indoor temp: next_temp = current_temp + delta_t.
-        # 3. Return the simulated indoor temperatures series (excluding initial temp).
-        #
-        # NOTE: A fully working baseline reference is available for guidance in:
-        # `src/infrastructure/reference_baselines/baseline_thermal.py`
-        # =========================================================================
-        """
-        raise NotImplementedError(
-            "Member 3: Please implement BuildingThermalTwin.simulate() in src/agents/digital_twin/thermal_model.py. "
-            "See TEAM_GUIDES/MEMBER_3_DIGITAL_TWIN_AND_PHYSICS_GUIDE.md for exact instructions and Claude Code prompts."
-        )
+        """Runs the continuous 2R2C thermal differential equation across time intervals."""
+        temp_history = [initial_temp_c]
+        for t_amb, occupants, q_hvac in zip(ambient_temps, occupant_counts, hvac_power_kw):
+            q_occ = occupants * 0.10  # 100 W per occupant
+            q_transfer = (t_amb - temp_history[-1]) / self.r_vent
+            delta_t = (q_transfer + q_occ - q_hvac) * (dt_hours / self.c_in)
+            temp_history.append(round(temp_history[-1] + delta_t, 2))
+        return temp_history[1:]
