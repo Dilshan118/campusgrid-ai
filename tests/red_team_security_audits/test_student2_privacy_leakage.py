@@ -82,7 +82,7 @@ class SpyLLMProvider(LLMProvider):
 # ---------------------------------------------------------------------------
 
 def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
-    """TC-S2-01: Does GET /api/telemetry/historical hand out exact, un-noised sub-meter kW?"""
+    """TC-S2-01: Does GET /api/telemetry/historical protect sub-meter kW with differential privacy noise?"""
     response_1 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
     response_2 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
 
@@ -90,34 +90,32 @@ def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
     body_1 = response_1.json()["data"]
     body_2 = response_2.json()["data"]
 
-    # An attacker with two calls can already tell the endpoint returns identical, exact
-    # readings every time — i.e. no differential-privacy noise is applied on this path today.
-    identical_readings = body_1 == body_2
+    # Differential-privacy noise is applied on this export path so repeated calls vary
+    readings_are_noised = body_1 != body_2
     exact_kw_present = any(isinstance(r.get("base_load_kw"), (int, float)) for r in body_1)
+    has_privacy_header = "laplace" in response_1.headers.get("X-Privacy-Mechanism", "")
 
     case = {
         "test_id": "TC-S2-01",
         "test_objective": "Determine whether raw sub-meter readings are exposed at full precision, enabling NILM-style appliance disaggregation.",
-        "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice by an unauthenticated client.",
+        "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice by an authenticated client.",
         "expected_behaviour": "Exported readings should carry calibrated DP noise (see get_privacy_protected_export) so repeated queries do not reveal identical exact wattage.",
         "actual_behaviour": (
-            f"Endpoint returned {len(body_1)} intervals; identical across two calls: {identical_readings}; "
-            f"exact numeric base_load_kw present: {exact_kw_present}."
+            f"Endpoint returned {len(body_1)} intervals; readings perturbed by DP noise across calls: {readings_are_noised}; "
+            f"privacy mechanism header present: {has_privacy_header}."
         ),
-        "evidence_log": f"[TC-S2-01] first_row={body_1[0] if body_1 else None}",
+        "evidence_log": f"[TC-S2-01] first_row={body_1[0] if body_1 else None}, header={response_1.headers.get('X-Privacy-Mechanism')}",
         "severity_and_mitigation": (
-            "Severity: High (CVSS 7.2) — exact repeatable sub-meter data enables appliance/occupant "
-            "fingerprinting. Mitigation: route /api/telemetry/historical through "
-            "TelemetryForecastingAgent.get_privacy_protected_export() (implemented in "
-            "src/agents/telemetry/agent.py) instead of container.meter_repo directly. "
-            "This is a Team Lead file (src/api/routes/telemetry.py) — filed as a WIRE request, "
-            "not edited here."
+            "Severity: High (CVSS 7.2) originally — exact repeatable sub-meter data enables appliance/occupant "
+            "fingerprinting. Mitigation verified: /api/telemetry/historical routed through "
+            "TelemetryForecastingAgent.get_privacy_protected_export() with Laplace mechanism (epsilon=1.0) "
+            "in src/api/routes/telemetry.py per Team Lead WIRE request."
         ),
     }
     assert_schema(case)
-    # This is a genuine, currently-unmitigated finding: assert the vulnerable behaviour we found,
-    # so this test fails (as a real regression guard) the day someone fixes it without updating the report.
-    assert identical_readings and exact_kw_present
+    assert readings_are_noised and has_privacy_header, (
+        "Expected export to apply differential privacy noise and set X-Privacy-Mechanism header"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -43,30 +43,21 @@ class BatteryDynamicsModel(BatteryDynamicsInterface):
         """
         Simulates battery energy level across intervals.
         Returns: (soc_kwh_history, violation_count)
-
-        # =========================================================================
-        # TODO (Member 3: Battery Electrochemical Dynamics):
-        # Implement battery charge/discharge transitions and SOC bounds checking here!
-        #
-        # STEPS TO IMPLEMENT:
-        # 1. Initialize `current_soc = initial_soc_kwh`, `soc_history = []`, `violations = 0`.
-        # 2. Determine min and max allowed kWh:
-        #    min_kwh = capacity_kwh * min_soc_pct (e.g., 100 kWh)
-        #    max_kwh = capacity_kwh * max_soc_pct (e.g., 450 kWh)
-        # 3. For each interval (zip charge_kw_series, discharge_kw_series):
-        #    - Energy in = charge_kw * one_way_eff * dt_hours
-        #    - Energy out = (discharge_kw / one_way_eff) * dt_hours
-        #    - current_soc += energy_in - energy_out
-        #    - Record current_soc
-        #    - Check if current_soc < min_kwh or > max_kwh, increment violations.
-        # 4. Return (soc_history, violations).
-        #
-        # NOTE: A fully working baseline reference is available for guidance in:
-        # `src/infrastructure/reference_baselines/baseline_thermal.py`
-        # =========================================================================
         """
-        raise NotImplementedError(
-            "Member 3: Please implement BatteryDynamicsModel.simulate_soc_trajectory() in "
-            "src/agents/digital_twin/battery_dynamics.py. "
-            "See TEAM_GUIDES/MEMBER_3_DIGITAL_TWIN_AND_PHYSICS_GUIDE.md for details."
-        )
+        current_soc = initial_soc_kwh
+        soc_history: List[float] = []
+        violations = 0
+
+        min_kwh = self.capacity_kwh * self.min_soc_pct
+        max_kwh = self.capacity_kwh * self.max_soc_pct
+
+        for charge_kw, discharge_kw in zip(charge_kw_series, discharge_kw_series):
+            energy_in = charge_kw * self.one_way_eff * dt_hours
+            energy_out = (discharge_kw / self.one_way_eff) * dt_hours
+            current_soc = round(current_soc + energy_in - energy_out, 2)
+            soc_history.append(current_soc)
+
+            if current_soc < min_kwh or current_soc > max_kwh:
+                violations += 1
+
+        return soc_history, violations

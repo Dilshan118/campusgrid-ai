@@ -19,18 +19,27 @@ def _container(**overrides) -> Container:
     return Container(Settings(app_env="test", **overrides))
 
 
-def test_unfinished_member_slice_falls_back_automatically():
-    """A default install (no .env, no baseline switches) must still produce plans."""
+def test_unfinished_member_slice_falls_back_automatically(monkeypatch):
+    """A default install (no .env, no baseline switches) must still produce plans with all completed slices."""
     container = _container()
     status = container.slice_status()
-    assert status["agent2_digital_twin"] == "reference_baseline_auto"  # Member 3's physics is not written yet
     assert status["agent1_telemetry"] == "member_implementation"
+    assert status["agent2_digital_twin"] == "member_implementation"
     assert status["agent4_dispatch"] == "member_implementation"
     res = container.orchestrator.execute({"query": PLAN_QUERY, "user_id": "admin"})
     assert res.success, res.error
 
+    # Verify that if any member slice is unfinished (NotImplementedError), it falls back automatically
+    monkeypatch.setattr("src.application.container._probe_thermal", lambda target: (_ for _ in ()).throw(NotImplementedError("Simulated unfinished physics")))
+    fallback_container = _container()
+    fallback_status = fallback_container.slice_status()
+    assert fallback_status["agent2_digital_twin"] == "reference_baseline_auto"
+    fallback_res = fallback_container.orchestrator.execute({"query": PLAN_QUERY, "user_id": "admin"})
+    assert fallback_res.success, fallback_res.error
 
-def test_fallback_can_be_switched_off_for_members_testing_their_own_code():
+
+def test_fallback_can_be_switched_off_for_members_testing_their_own_code(monkeypatch):
+    monkeypatch.setattr("src.agents.digital_twin.thermal_model.BuildingThermalTwin.simulate", lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError("Member 3 physics under test")))
     container = _container(auto_baseline_fallback=False)
     assert container.slice_status()["agent2_digital_twin"] == "member_implementation"
     res = container.orchestrator.execute({"query": PLAN_QUERY, "user_id": "admin"})

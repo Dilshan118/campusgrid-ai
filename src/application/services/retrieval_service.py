@@ -81,13 +81,26 @@ class RetrievalService:
         self,
         vector_store: VectorStore,
         embedding_provider: EmbeddingProvider,
-        keyword_engine: KeywordSearchEngine,
-        reranker: Reranker,
-        ingestion_pipeline: Any,
+        keyword_engine: Optional[KeywordSearchEngine] = None,
+        reranker: Optional[Reranker] = None,
+        ingestion_pipeline: Optional[Any] = None,
         corpus_dir: Optional[str] = None,
         cache: Optional[CacheProvider] = None,
         cache_ttl_seconds: int = 600,
     ):
+        if keyword_engine is None:
+            from src.infrastructure.retrieval.sparse_bm25 import BM25SearchEngine
+            keyword_engine = BM25SearchEngine()
+        if reranker is None:
+            from src.infrastructure.retrieval.rrf_reranker import RRFReranker
+            reranker = RRFReranker()
+        if ingestion_pipeline is None:
+            from src.pipelines.document_ingestion.ingest_corpus import DocumentIngestionPipeline
+            ingestion_pipeline = DocumentIngestionPipeline(
+                vector_store=vector_store,
+                embedding_provider=embedding_provider,
+                keyword_engine=keyword_engine,
+            )
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
         self.keyword_engine = keyword_engine

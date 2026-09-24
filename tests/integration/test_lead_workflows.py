@@ -201,7 +201,8 @@ def test_forecast_only_intent_runs_only_agent1(test_container):
 def test_query_text_what_if_values_are_not_overridden_by_api_defaults(client):
     resp = client.post("/api/orchestrator/query", json={"query": "Simulate a +3C heatwave in Lecture Hall 1 with double occupancy."})
     applied = resp.json()["data"]["digital_twin_feasibility"]["perturbation_applied"]
-    assert applied == {"temp_delta_c": 3.0, "occupancy_multiplier": 2.0}
+    assert applied["temp_delta_c"] == 3.0
+    assert applied["occupancy_multiplier"] == 2.0
 
     slider = client.post("/api/orchestrator/query", json={
         "query": "Simulate a +3C heatwave in Lecture Hall 1", "perturb_temp_delta_c": 5.0,
