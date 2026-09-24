@@ -48,7 +48,7 @@ describes the dashboard to build on top of this backend.
 | Digital twin (2R2C thermal, battery SOC) | ❌ | Member 3's physics raises `NotImplementedError`; the demo uses the reference baseline |
 | Deterministic safety limits (21.0–25.5 °C, 20–90 % SOC) | 🔶 | Solver respects SOC; comfort limits are now passed from settings, but Agent 2 still hard-codes them |
 | Tamper-evident audit trail | ✅ | SHA-256 hash chain + database trigger blocking UPDATE/DELETE + verify endpoint |
-| Dashboard | 🔶 | Prototype only; full spec written, not yet built |
+| Dashboard | ✅ | Rebuilt to the UI/UX spec: sign-in, role-based navigation, approvals, plan review, analytics, audit; light/dark; mobile |
 
 ---
 
@@ -91,7 +91,7 @@ from the wrong place and could never fail), and TC-S1-06 / TC-S1-14 now test the
 
 | Item | Note |
 |---|---|
-| Build the dashboard from the UI/UX spec | Spec section 12 lists what the prototype must change |
+| ~~Build the dashboard from the UI/UX spec~~ | **Done** — `frontend/`, verified in a browser for all three roles |
 | spaCy NER | Optional. Rules + room inventory cover the entities; spaCy is not installed. Decide whether to add it or remove the claim |
 | Post-solve comfort verification | Needs Members 3 and 4 first (issue I-1) |
 | Live PostgreSQL run | Re-run `backend/data/init.sql` (new audit columns, trigger, `analytics_events` table); Postgres paths are not covered by tests |
@@ -183,7 +183,7 @@ These are requests, not edits. Each item names the file so you can find it quick
 | **I-7** | No per-tier load exists anywhere | Tier constraints have nothing to act on | Decision D-1 | Lead + M2 + M4 |
 | **I-8** | Default config crashed every plan while Agent 2 is unimplemented, and the only fix disabled Members 2 and 4 too | Broken demos, or hidden work | `REFERENCE_BASELINE_AGENTS=agent2` in `.env.example` | Lead ✅ |
 | **I-9** | TC-S2-01 asserts the old vulnerability | One red test | Member 2 item 1 | M2 |
-| **I-10** | The frontend prototype auto-logs in as admin, stores passwords, sends stale fields | Unsafe and now partly incompatible | Rebuild per UI/UX spec section 12 | Lead |
+| **I-10** | The frontend prototype auto-logged in as admin, stored passwords, sent stale fields | Unsafe and partly incompatible | Rebuilt to the UI/UX spec | Lead ✅ |
 | **I-11** | MCP is claimed but absent | Protocol requirement unmet | Member 3 item 6 | M3 |
 | **I-12** | `day_of_week` fixed at 1 | Wrong occupancy on other days | Member 2 item 3 | M2 |
 

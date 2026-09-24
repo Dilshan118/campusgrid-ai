@@ -4,8 +4,9 @@
 each person can do, every page, how people move between pages, and the edge cases each screen has to
 handle. It is written so the frontend can be built from it without reading the backend code.
 
-**What this is not:** an implementation. No screens have been built from this spec yet. The
-current React prototype in `frontend/` predates it; section 12 lists what that prototype has to change.
+**Status:** implemented. The dashboard in `frontend/` was rebuilt to this spec on 24 September 2026
+and verified in a browser for all three roles, light and dark themes, and a 390 px phone. Section 12
+records what changed from the earlier prototype.
 
 **Written against:** the backend as of 24 September 2026. Every screen below maps onto an API that
 exists today unless it is marked **(planned)**.
@@ -25,7 +26,7 @@ exists today unless it is marked **(planned)**.
 9. [Edge cases and system considerations](#9-edge-cases-and-system-considerations)
 10. [Analytics instrumentation (what the UI must report)](#10-analytics-instrumentation-what-the-ui-must-report)
 11. [UI/UX guidelines and improvements](#11-uiux-guidelines-and-improvements)
-12. [Changes needed in the current prototype](#12-changes-needed-in-the-current-prototype)
+12. [Changes made from the earlier prototype](#12-changes-made-from-the-earlier-prototype)
 13. [Appendix: page → API map](#13-appendix-page--api-map)
 
 ---
@@ -122,7 +123,7 @@ self-registration.
 | Audit trail (list + detail) | ✅ | 👁 | ✅ |
 | Audit integrity check | ✅ | — | ✅ |
 | Web analytics | ✅ | — | ✅ |
-| System status | ✅ | 👁 (basic) | 👁 (basic) |
+| System status | ✅ | footer summary | footer summary |
 
 **How the UI knows:** the login response and `GET /api/auth/me` return a `permissions` list
 (for example `audit:approve`, `rag:ingest`, `analytics:read`). Show or hide every button and menu
@@ -140,6 +141,7 @@ is for clarity, not security.
 | `audit:read` | Audit trail, approvals queue (read) |
 | `audit:approve` | Approve / reject buttons |
 | `analytics:read` | Analytics page, audit integrity check |
+| `system:read` | System status page (facility managers) |
 
 ---
 
@@ -324,7 +326,8 @@ makes them guess.
 **Section B — The schedule**
 - Chart 1: grid import before vs after, 48 half-hour points, peak window shaded.
 - Chart 2: battery charge (up) / discharge (down) bars.
-- Chart 3: battery level (kWh) with the 20 % and 90 % limits drawn as lines.
+- Chart 3: battery level (kWh) with the 20 % and 90 % limits drawn as lines (limits come from
+  `battery_limits` stored with the plan).
 - A **"View as table"** toggle under every chart (accessibility, and auditors like tables).
 - Binding limits from `solver_summary.binding_constraints`: "Savings were limited by: battery power
   (100 kW) at 18:30…"
@@ -356,7 +359,8 @@ Decision rules the UI must follow (the server enforces them too):
 - A confirmation step before either action: "Approve this plan? It will be recorded permanently and
   cannot be undone."
 - After approving: show "Recorded. CampusGrid does not operate equipment — carry out the schedule
-  through the building management system." plus a **Download execution checklist** button *(planned)*.
+  through the building management system." plus a **Download execution checklist** button (a
+  plain-text list of battery actions per time range, with a sign-off line).
 
 ### 6.5 Approvals queue
 
@@ -378,8 +382,8 @@ Controls: date · starting indoor temperature (18–35 °C) · outdoor temperatu
 
 Output: indoor temperature line over 48 intervals with the comfort band shaded; outdoor temperature as
 a faint second line; a verdict banner ("Comfort maintained" / "N intervals too hot"); the number of
-violations; a note when `weather_source` is `fallback` ("Live weather unavailable — using a typical
-day").
+violations; a note when `weather_source` is `offline-fallback` ("Live weather unavailable — using a
+typical day").
 
 Action: "Plan for this scenario" → opens Ask CampusGrid pre-filled.
 
@@ -423,7 +427,7 @@ summary, and a toggle to overlay the historical profile (which is privacy-noised
 - **Integrity check** (manager, auditor): button "Verify audit trail" → green "All N records verified"
   or red "Record #X does not match its signature — the trail may have been altered." This calls
   `GET /api/audit/verify`.
-- **Export CSV** of the filtered table *(planned)*.
+- **Export CSV** of the filtered table.
 
 ### 6.11 Analytics (manager, auditor)
 
@@ -553,7 +557,7 @@ significance.
 | Condition | How the UI finds out | What to show |
 |---|---|---|
 | Semantic search off (mock embeddings) | `dense_search_enabled: false` from health | "Keyword matching only" next to search |
-| Live weather unavailable | `weather_source: "fallback"` | "Using a typical-day weather curve" |
+| Live weather unavailable | `weather_source: "offline-fallback"` | "Using a typical-day weather curve" |
 | An agent is on its reference baseline | `agent_slices` | System status page only (not a user-facing banner) |
 | Language model offline | 502 on explanation step | Retry; plan numbers are still shown if returned |
 
@@ -630,7 +634,7 @@ or test accounts in production analytics.
 | Improvement | Why |
 |---|---|
 | Notification (email or in-app) when a plan is waiting | Plans expire after 24 h |
-| Downloadable execution checklist / PDF of an approved plan | The team carries out plans manually; the bursar wants a record |
+| PDF version of the execution checklist (the plain-text checklist is built) | The bursar wants a formatted record |
 | Compare two plans side by side | Managers ask "what if we precool to 24 instead of 23.5?" |
 | Monthly savings report for the bursar | The buyer is finance, not operations |
 | "Why was this rejected?" summary on the operator's home | Closes the feedback loop |
@@ -639,12 +643,12 @@ or test accounts in production analytics.
 
 ---
 
-## 12. Changes needed in the current prototype
+## 12. Changes made from the earlier prototype
 
-The prototype in `frontend/` was built before the backend's security and approval work. When the
-dashboard is rebuilt from this spec, these must change:
+The first prototype in `frontend/` was built before the backend's security and approval work. The
+rebuild made every change below (all done as of 24 September 2026):
 
-| Current prototype behaviour | Required behaviour |
+| Earlier prototype behaviour | Behaviour now |
 |---|---|
 | Logs in automatically as `admin` with a hard-coded password on page load | A real sign-in page (section 4) |
 | "Switch role" buttons that log in with stored passwords | Removed; sign out and sign in instead |
@@ -669,6 +673,7 @@ All endpoints need `Authorization: Bearer <token>` except health and login.
 | Sign out | `POST /api/auth/logout` | any signed-in |
 | Role descriptions | `GET /api/auth/roles` | public |
 | System status | `GET /api/health` | public |
+| Room list (pickers) | `GET /api/campus/rooms` | all |
 | Ask CampusGrid | `POST /api/orchestrator/query` | manager, operator |
 | New dispatch plan | `POST /api/optimizer/dispatch` | manager, operator |
 | What-if simulator | `POST /api/simulation/what-if` | manager, operator |

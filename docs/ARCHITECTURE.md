@@ -293,7 +293,7 @@ Two background jobs that run on a schedule, not during a request:
 
 | Layer | What we use | Status |
 |---|---|---|
-| Dashboard | React 18, Vite, Tailwind, Recharts | shell only |
+| Dashboard | React 18, Vite, Tailwind, Recharts | working (all pages in the UI/UX spec) |
 | Web server | FastAPI + Uvicorn | working |
 | Login & permissions | JWT tokens, 3 roles, per-route checks | working |
 | Understanding questions | rule-based entities + LLM intent router for unclear queries; spaCy NER planned | working |
@@ -551,7 +551,7 @@ your own code in the viva.
 | ~~Document ingestion~~ | Team Lead | **Done** — Markdown/TXT/PDF, screening, de-duplication |
 | Entity extraction + smart routing | Team Lead | **Done** except spaCy (rule entities + LLM router) |
 | ~~Real analytics~~ | Team Lead | **Done** — funnel, A/B z-test, intent clusters, MRR |
-| Dashboard screens | Team Lead | Spec written: `docs/SYSTEM_USER_FLOW_AND_UIUX_SPEC.md` |
+| ~~Dashboard screens~~ | Team Lead | **Done** — built to `docs/SYSTEM_USER_FLOW_AND_UIUX_SPEC.md` |
 | ~~Search quality measurement~~ | Team Lead | **Done** — 30-query benchmark, in the test suite |
 
 ---
