@@ -11,6 +11,8 @@ class HealthResponse(BaseModel):
     system: str
     version: str
     active_providers: Dict[str, str]
+    agent_slices: Dict[str, str] = Field(default_factory=dict)
+    dense_search_enabled: bool = True
 
 class APIResponse(BaseModel):
     success: bool
