@@ -41,3 +41,8 @@ class VectorStore(ABC):
     def count(self) -> int:
         """Returns total number of stored vectors."""
         pass
+
+    def list_documents(self) -> List[DocumentClause]:
+        """Returns every stored clause (without embeddings). Used to rebuild the keyword index
+        on startup when the vector store is persistent (pgvector, Chroma)."""
+        raise NotImplementedError(f"{type(self).__name__} does not support list_documents()")

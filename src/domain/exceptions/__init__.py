@@ -8,6 +8,8 @@ from src.domain.exceptions.base import (
     EntityNotFoundError,
     ToolExecutionError,
     FaithfulnessVerificationError,
+    AgentExecutionError,
+    WorkflowConflictError,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "EntityNotFoundError",
     "ToolExecutionError",
     "FaithfulnessVerificationError",
+    "AgentExecutionError",
+    "WorkflowConflictError",
 ]
