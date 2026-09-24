@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from src.domain.entities.telemetry import TelemetryInterval
 from src.domain.entities.audit import AuditRecord
+from src.domain.entities.analytics import AnalyticsEvent
 
 class RoomRepository(ABC):
     """Abstract repository for campus physical rooms and zones."""
@@ -45,13 +46,53 @@ class MeterHistoryRepository(ABC):
         pass
 
 class AuditLogRepository(ABC):
-    """Abstract repository for append-only audit trail."""
+    """Abstract repository for append-only audit trail.
+
+    Implementations must sign every appended row with compute_audit_signature(), chaining it
+    to the previous row's signature, and must never update or delete an existing row.
+    """
 
     @abstractmethod
     def log_transaction(self, record: AuditRecord) -> int:
-        """Appends an immutable audit record and returns its ID."""
+        """Appends an immutable, hash-chained audit record and returns its ID."""
         pass
 
     @abstractmethod
-    def list_recent(self, limit: int = 50) -> List[AuditRecord]:
+    def list_recent(self, limit: int = 50, record_type: Optional[str] = None) -> List[AuditRecord]:
+        """Newest first, optionally only one record type."""
+        pass
+
+    @abstractmethod
+    def get_by_id(self, log_id: int) -> Optional[AuditRecord]:
+        pass
+
+    @abstractmethod
+    def get_decision_for(self, log_id: int) -> Optional[AuditRecord]:
+        """Returns the approval_decision row whose parent_log_id is log_id, if one exists."""
+        pass
+
+    def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        """Decision rows for many recommendations at once (avoids one query per row)."""
+        decisions = {}
+        for log_id in log_ids:
+            decision = self.get_decision_for(log_id)
+            if decision is not None:
+                decisions[log_id] = decision
+        return decisions
+
+    @abstractmethod
+    def list_all_ascending(self) -> List[AuditRecord]:
+        """Every row, oldest first, for hash-chain verification."""
+        pass
+
+class AnalyticsEventRepository(ABC):
+    """Abstract repository for web-analytics interaction events (append-only)."""
+
+    @abstractmethod
+    def record(self, event: AnalyticsEvent) -> int:
+        pass
+
+    @abstractmethod
+    def list_events(self, event_types: Optional[List[str]] = None, limit: int = 10_000) -> List[AnalyticsEvent]:
+        """Oldest first, optionally filtered to the given event types."""
         pass

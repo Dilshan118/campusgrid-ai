@@ -38,7 +38,7 @@ class MockLLMProvider(LLMProvider):
         if self.default_response:
             content = self.default_response
         # 2. Intent extraction prompt
-        elif "intent" in system_instruction.lower() or "action" in system_instruction.lower():
+        elif "intent" in system_instruction.lower():
             content = json.dumps({
                 "action": "optimize_dispatch",
                 "target": "campus_chillers",
@@ -56,7 +56,13 @@ class MockLLMProvider(LLMProvider):
                 "confidence": 1.0,
                 "reasoning": "All stated kilowatt values and tariff rates match mathematical solver output."
             })
-        # 4. Standard XAI Plain-English Justification
+        # 4. Agent 1 forecast briefing note (summarisation)
+        elif "briefing note" in system_instruction.lower():
+            content = (
+                "Tomorrow's demand follows the usual weekday lecture pattern with an afternoon peak. "
+                "Flagged intervals coincide with the hottest hours of the day."
+            )
+        # 5. Standard XAI Plain-English Justification
         else:
             content = (
                 "Based on the mathematical optimization (MILP solver), CampusGrid AI successfully scheduled "

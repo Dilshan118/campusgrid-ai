@@ -24,3 +24,9 @@ class EmbeddingProvider(ABC):
     def dimension(self) -> int:
         """Returns the dimensionality of the generated vectors (e.g., 384 or 1536)."""
         pass
+
+    @property
+    def is_semantic(self) -> bool:
+        """False for providers whose vectors carry no meaning (e.g. the hash-based mock).
+        Hybrid retrieval skips the dense leg for them instead of fusing noise into the ranking."""
+        return True

@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS document_clauses (
 );
 
 -- Audit and Log Store (Encrypted at rest / Append-only)
+-- Column set must match src/infrastructure/database/repositories/audit_log_repository.py.
+-- An approval never edits a recommendation row: it appends an 'approval_decision' row whose
+-- parent_log_id points at the recommendation. Every row carries a SHA-256 signature chained to
+-- the previous row (see src/domain/entities/audit.py :: compute_audit_signature).
 CREATE TABLE IF NOT EXISTS audit_log_store (
     log_id BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -64,3 +68,45 @@ CREATE TABLE IF NOT EXISTS audit_log_store (
     human_approved BOOLEAN DEFAULT FALSE,
     signature VARCHAR(255)
 );
+
+-- Idempotent upgrades for databases created from an earlier version of this file.
+ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS record_type VARCHAR(40) NOT NULL DEFAULT 'dispatch_recommendation';
+ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) NOT NULL DEFAULT 'not_required';
+ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS parent_log_id BIGINT REFERENCES audit_log_store(log_id);
+ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS previous_signature VARCHAR(64);
+
+-- At most one approve/reject decision per recommendation.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_decision_per_recommendation
+    ON audit_log_store (parent_log_id) WHERE record_type = 'approval_decision';
+
+-- Append-only enforcement at the database level, not just in application code.
+CREATE OR REPLACE FUNCTION audit_log_store_block_mutation() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_log_store is append-only: % is not permitted', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_log_store_append_only ON audit_log_store;
+CREATE TRIGGER audit_log_store_append_only
+    BEFORE UPDATE OR DELETE ON audit_log_store
+    FOR EACH ROW EXECUTE FUNCTION audit_log_store_block_mutation();
+
+-- Web Analytics interaction events (query clusters, acceptance funnel, XAI A/B test, citation MRR).
+-- Column set must match src/infrastructure/database/repositories/analytics_event_repository.py.
+CREATE TABLE IF NOT EXISTS analytics_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    event_type VARCHAR(40) NOT NULL,
+    user_id VARCHAR(100) NOT NULL,
+    role VARCHAR(40),
+    session_id VARCHAR(100),
+    audit_log_id BIGINT,
+    ab_variant VARCHAR(40),
+    intent VARCHAR(40),
+    query_text VARCHAR(500),
+    rank INT,
+    clause_reference VARCHAR(200),
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events (event_type);

@@ -6,6 +6,7 @@ never edit the same module:
 
     room_repository.py           -> Member 1 (Team Lead)
     audit_log_repository.py      -> Member 1 (Team Lead)
+    analytics_event_repository.py -> Member 1 (Team Lead)
     timetable_repository.py      -> Member 2 (Developer 1)
     meter_history_repository.py  -> Member 2 (Developer 1)
 
@@ -20,11 +21,17 @@ from src.infrastructure.database.repositories.audit_log_repository import (
     InMemoryAuditLogRepository,
     PostgresAuditLogRepository,
 )
+from src.infrastructure.database.repositories.analytics_event_repository import (
+    InMemoryAnalyticsEventRepository,
+    PostgresAnalyticsEventRepository,
+)
 from src.infrastructure.database.repositories.timetable_repository import (
     InMemoryTimetableRepository,
+    PostgresTimetableRepository,
 )
 from src.infrastructure.database.repositories.meter_history_repository import (
     InMemoryMeterHistoryRepository,
+    PostgresMeterHistoryRepository,
 )
 
 __all__ = [
@@ -32,6 +39,10 @@ __all__ = [
     "PostgresRoomRepository",
     "InMemoryAuditLogRepository",
     "PostgresAuditLogRepository",
+    "InMemoryAnalyticsEventRepository",
+    "PostgresAnalyticsEventRepository",
     "InMemoryTimetableRepository",
+    "PostgresTimetableRepository",
     "InMemoryMeterHistoryRepository",
+    "PostgresMeterHistoryRepository",
 ]

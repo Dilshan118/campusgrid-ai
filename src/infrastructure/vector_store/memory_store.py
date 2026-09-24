@@ -5,6 +5,7 @@ Enables offline development, testing, and zero-dependency deployments.
 """
 
 import math
+import threading
 from typing import List, Dict, Any, Optional
 from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult
 from src.domain.entities.rag import DocumentClause
@@ -15,6 +16,7 @@ class MemoryVectorStore(VectorStore):
     def __init__(self):
         self._documents: Dict[str, DocumentClause] = {}
         self._counter = 1
+        self._lock = threading.Lock()  # shared by concurrent request threads
 
     def _cosine_similarity(self, vec_a: List[float], vec_b: List[float]) -> float:
         if not vec_a or not vec_b or len(vec_a) != len(vec_b):
@@ -28,13 +30,14 @@ class MemoryVectorStore(VectorStore):
 
     def add_documents(self, documents: List[DocumentClause]) -> List[str]:
         ids = []
-        for doc in documents:
-            if doc.id is None:
-                doc.id = self._counter
-                self._counter += 1
-            doc_id = str(doc.id)
-            self._documents[doc_id] = doc
-            ids.append(doc_id)
+        with self._lock:
+            for doc in documents:
+                if doc.id is None:
+                    doc.id = self._counter
+                    self._counter += 1
+                doc_id = str(doc.id)
+                self._documents[doc_id] = doc
+                ids.append(doc_id)
         return ids
 
     def similarity_search(
@@ -44,7 +47,9 @@ class MemoryVectorStore(VectorStore):
         filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[VectorSearchResult]:
         results = []
-        for doc_id, doc in self._documents.items():
+        with self._lock:
+            snapshot = list(self._documents.values())  # never iterate the live dict while another thread adds
+        for doc in snapshot:
             if not doc.embedding:
                 continue
 
@@ -66,9 +71,15 @@ class MemoryVectorStore(VectorStore):
         return results[:top_k]
 
     def delete(self, document_ids: List[str]) -> bool:
-        for d_id in document_ids:
-            self._documents.pop(d_id, None)
+        with self._lock:
+            for d_id in document_ids:
+                self._documents.pop(d_id, None)
         return True
 
     def count(self) -> int:
         return len(self._documents)
+
+    def list_documents(self) -> List[DocumentClause]:
+        with self._lock:
+            snapshot = list(self._documents.values())
+        return [doc.model_copy(update={"embedding": None}) for doc in snapshot]

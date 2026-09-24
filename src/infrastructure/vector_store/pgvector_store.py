@@ -107,6 +107,26 @@ class PgVectorStore(VectorStore):
                 provider_name="pgvector"
             ) from e
 
+    def list_documents(self) -> List[DocumentClause]:
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT id, source_document, clause_reference, section_title, content, effective_date "
+                    "FROM document_clauses ORDER BY id;"
+                )).fetchall()
+            return [
+                DocumentClause(
+                    id=r[0], source_document=r[1], clause_reference=r[2], section_title=r[3],
+                    content=r[4], effective_date=str(r[5]) if r[5] else None,
+                )
+                for r in rows
+            ]
+        except Exception as e:
+            raise VectorStoreException(
+                message=f"Failed to list pgvector documents: {str(e)}",
+                provider_name="pgvector"
+            ) from e
+
     def count(self) -> int:
         try:
             with self.engine.connect() as conn:

@@ -68,3 +68,39 @@ def test_api_audit_logs(client):
     data = response.json()
     assert data["success"] is True
     assert isinstance(data["data"], list)
+
+def test_api_rag_ingest(client):
+    payload = {
+        "text": "### Clause 9.9: Emergency Generator Operations\nEmergency diesel generators shall only be dispatched if the microgrid battery SOC drops below 15%.",
+        "source_document": "Campus Energy Contingency Plan 2026",
+        "effective_date": "2026-01-01"
+    }
+    response = client.post("/api/rag/ingest", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["clauses_added"] >= 1
+
+def test_api_auth_login_and_me(client):
+    # Test valid login
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "campusgrid2026"})
+    assert login_resp.status_code == 200
+    data = login_resp.json()
+    assert data["success"] is True
+    token = data["data"]["access_token"]
+    assert token is not None
+    assert data["data"]["role"] == "FACILITY_MANAGER"
+
+    # Test /me with Bearer token
+    me_resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_resp.status_code == 200
+    me_data = me_resp.json()
+    assert me_data["success"] is True
+    assert me_data["data"]["user_id"] == "admin"
+    assert me_data["data"]["role"] == "FACILITY_MANAGER"
+
+def test_api_auth_invalid_credentials(client):
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong_password"})
+    assert login_resp.status_code == 401 or login_resp.status_code == 400
+
+

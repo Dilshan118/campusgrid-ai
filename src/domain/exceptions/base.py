@@ -82,3 +82,21 @@ class FaithfulnessVerificationError(DomainException):
             error_code="FAITHFULNESS_CHECK_FAILED",
             details={"ungrounded_claims": ungrounded_claims, **(details or {})}
         )
+
+class AgentExecutionError(DomainException):
+    """Raised at the API boundary when an agent (or the orchestrator pipeline) reports failure."""
+    def __init__(self, agent_name: str, reason: Optional[str], details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"{agent_name} could not complete the request: {reason}",
+            error_code="AGENT_EXECUTION_FAILED",
+            details={"agent": agent_name, "status": 502, **(details or {})}
+        )
+
+class WorkflowConflictError(DomainException):
+    """Raised when a workflow action is not valid for the record's current state (e.g. approving twice)."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=message,
+            error_code="WORKFLOW_CONFLICT",
+            details={"status": 409, **(details or {})}
+        )
