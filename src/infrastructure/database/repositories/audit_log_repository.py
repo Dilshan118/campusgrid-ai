@@ -7,7 +7,7 @@ OWNER: Member 1 (Team Lead)
 
 import json
 import threading
-from typing import List, Optional
+from typing import Dict, List, Optional
 from sqlalchemy import text
 from src.domain.interfaces.repositories import AuditLogRepository
 from src.domain.entities.audit import (
@@ -36,8 +36,18 @@ class InMemoryAuditLogRepository(AuditLogRepository):
             self._logs.append(record.model_copy(deep=True))
             return record.log_id
 
-    def list_recent(self, limit: int = 50) -> List[AuditRecord]:
-        return [r.model_copy(deep=True) for r in reversed(self._logs[-limit:])]
+    def list_recent(self, limit: int = 50, record_type: Optional[str] = None) -> List[AuditRecord]:
+        with self._lock:
+            logs = [r for r in self._logs if record_type is None or r.record_type == record_type]
+        return [r.model_copy(deep=True) for r in reversed(logs[-limit:])]
+
+    def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        wanted = set(log_ids)
+        with self._lock:
+            return {
+                r.parent_log_id: r.model_copy(deep=True) for r in self._logs
+                if r.record_type == RECORD_APPROVAL_DECISION and r.parent_log_id in wanted
+            }
 
     def get_by_id(self, log_id: int) -> Optional[AuditRecord]:
         for r in self._logs:
@@ -121,13 +131,27 @@ class PostgresAuditLogRepository(AuditLogRepository):
             record.log_id = int(res.scalar() or 0)
             return record.log_id
 
-    def list_recent(self, limit: int = 50) -> List[AuditRecord]:
+    def list_recent(self, limit: int = 50, record_type: Optional[str] = None) -> List[AuditRecord]:
+        where = "WHERE record_type = :rt" if record_type else ""
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text(f"SELECT {_SELECT_COLUMNS} FROM audit_log_store ORDER BY log_id DESC LIMIT :lim;"),
-                {"lim": limit}
+                text(f"SELECT {_SELECT_COLUMNS} FROM audit_log_store {where} ORDER BY log_id DESC LIMIT :lim;"),
+                {"lim": limit, "rt": record_type}
             ).fetchall()
         return [_row_to_record(r) for r in rows]
+
+    def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        if not log_ids:
+            return {}
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT {_SELECT_COLUMNS} FROM audit_log_store "
+                    "WHERE record_type = :rt AND parent_log_id = ANY(:ids);"
+                ),
+                {"rt": RECORD_APPROVAL_DECISION, "ids": list(log_ids)}
+            ).fetchall()
+        return {r[9]: _row_to_record(r) for r in rows}
 
     def get_by_id(self, log_id: int) -> Optional[AuditRecord]:
         with self.engine.connect() as conn:

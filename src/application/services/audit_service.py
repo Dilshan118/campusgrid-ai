@@ -65,13 +65,14 @@ class AuditService:
             return decision.approval_status
         return "expired" if self._is_expired(record) else APPROVAL_PENDING
 
-    def to_view(self, record: AuditRecord, include_agent_sequence: bool = True) -> Dict[str, Any]:
+    _NOT_LOOKED_UP = object()
+
+    def to_view(self, record: AuditRecord, include_agent_sequence: bool = True, decision: Any = _NOT_LOOKED_UP) -> Dict[str, Any]:
         view = record.model_dump()
         if not include_agent_sequence:
             view.pop("agent_sequence", None)
-        decision = None
-        if record.record_type == RECORD_DISPATCH_RECOMMENDATION:
-            decision = self.audit_repo.get_decision_for(record.log_id)
+        if decision is AuditService._NOT_LOOKED_UP:
+            decision = self.audit_repo.get_decision_for(record.log_id) if record.record_type == RECORD_DISPATCH_RECOMMENDATION else None
         view["effective_status"] = self._effective_status(record, decision)
         if record.record_type == RECORD_DISPATCH_RECOMMENDATION:
             view["decision"] = None if decision is None else {
@@ -90,13 +91,14 @@ class AuditService:
         status: Optional[str] = None,
         include_agent_sequence: bool = False,
     ) -> List[Dict[str, Any]]:
-        # Over-fetch so filtering still fills the page on a mixed trail.
-        records = self.audit_repo.list_recent(limit=limit * 5 if (record_type or status) else limit)
+        # Type is filtered by the repository; status is derived, so over-fetch when filtering on it.
+        records = self.audit_repo.list_recent(limit=limit * 5 if status else limit, record_type=record_type)
+        decisions = self.audit_repo.get_decisions_for(
+            [r.log_id for r in records if r.record_type == RECORD_DISPATCH_RECOMMENDATION]
+        )
         views = []
         for r in records:
-            if record_type and r.record_type != record_type:
-                continue
-            view = self.to_view(r, include_agent_sequence=include_agent_sequence)
+            view = self.to_view(r, include_agent_sequence=include_agent_sequence, decision=decisions.get(r.log_id))
             if status and view["effective_status"] != status:
                 continue
             views.append(view)
