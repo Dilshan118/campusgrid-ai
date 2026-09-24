@@ -119,6 +119,24 @@ Open `.env` and fill in:
    ```
    * Interactive Swagger documentation: `http://localhost:8000/docs`
    * `uvicorn backend.main:app` still works — it is a compatibility shim re-exporting the same app.
+   * `GET /api/health` → `agent_slices` shows which agents run member code and which run a
+     reference baseline (set with `REFERENCE_BASELINE_AGENTS`, e.g. `agent2`).
+
+6. **Log in.** Every endpoint except `/api/health` and `/api/auth/login` needs
+   `Authorization: Bearer <token>` (in Swagger, use the **Authorize** button). Demo accounts:
+
+   | Username | Password | Role | Can |
+   |---|---|---|---|
+   | `admin` | `campusgrid2026` | `FACILITY_MANAGER` | everything, including **approving plans** and ingesting documents |
+   | `operator` | `operator123` | `OPERATOR` | ask questions, run simulations and dispatch plans; cannot approve |
+   | `auditor` | `audit123` | `ENERGY_AUDITOR` | read-only: audit trail, regulations, analytics |
+
+   Five wrong passwords lock an account for five minutes. Passwords are stored as PBKDF2 hashes.
+
+   The human-in-the-loop flow is: `POST /api/orchestrator/query` (plan, status `pending`) →
+   `GET /api/audit/pending` → `POST /api/audit/approve` (manager only; a rejection needs a reason,
+   and a plan with warnings needs `acknowledge_warnings: true`). `GET /api/audit/verify` checks the
+   audit trail's hash chain.
 
 ---
 
@@ -198,7 +216,7 @@ campusgrid-ai/
 ├── docs/                                       # Coursework specifications & SRS
 ├── TEAM_GUIDES/                                # Role briefs + authoritative ownership matrix
 └── tests/
-    ├── unit/  integration/                     # 45 tests
+    ├── unit/  integration/                     # unit + integration tests
     └── red_team_security_audits/               # 4 × 15-case individual audits
 ```
 
