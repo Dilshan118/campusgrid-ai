@@ -58,3 +58,25 @@ def test_agent4_dispatch_explanation(test_container):
     assert "solver_output" in res.data
     assert "explanation" in res.data
     assert res.data["net_savings_lkr"] >= 0.0
+
+def test_rule_extractor_dynamic_rates():
+    """Verify that RegulatoryRuleExtractor parses numeric values from text dynamically."""
+    from src.agents.policy_rag.rule_extractor import RegulatoryRuleExtractor
+    extractor = RegulatoryRuleExtractor()
+
+    custom_text = (
+        "Under Schedule I-2, peak energy consumption shall be billed at the unit rate of LKR 64.50 per kWh. "
+        "Day-time energy consumption is billed at LKR 32.50 per kWh. "
+        "Off-peak energy consumption is billed at LKR 16.00 per kWh. "
+        "A monthly maximum demand charge of LKR 1,250.00 per kVA is applied. "
+        "The indoor operative temperature envelope ranges between 21.5°C and 25.0°C."
+    )
+    rules = extractor.extract_tariff_rules(custom_text)
+
+    assert rules["rates_lkr_kwh"]["peak"] == 64.50
+    assert rules["rates_lkr_kwh"]["day"] == 32.50
+    assert rules["rates_lkr_kwh"]["off_peak"] == 16.00
+    assert rules["max_demand_penalty_lkr_kva"] == 1250.00
+    assert rules["comfort_standards"]["min_temp_c"] == 21.5
+    assert rules["comfort_standards"]["max_temp_c"] == 25.0
+
