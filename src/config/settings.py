@@ -7,9 +7,15 @@ via environment variables with zero code modifications.
 
 import os
 from functools import lru_cache
-from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Set
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The JWT secret shipped in .env.example. Accepted for local development only.
+DEFAULT_JWT_SECRET = "campusgrid_super_secret_jwt_key_replace_in_production_32b"
+
+# Slices that can be swapped for their reference baseline (see REFERENCE_BASELINE_AGENTS).
+BASELINE_AGENT_KEYS = {"agent1", "agent2", "agent4"}
 
 class LLMSettings(BaseModel):
     provider: str = Field(default="mock", description="'litellm', 'openai', 'gemini', 'anthropic', 'groq', 'ollama', 'mock'")
@@ -22,7 +28,7 @@ class LLMSettings(BaseModel):
     groq_api_key: Optional[str] = None
 
 class EmbeddingSettings(BaseModel):
-    provider: str = Field(default="mock", description="'sentence_transformers', 'openai', 'mock'")
+    provider: str = Field(default="mock", description="'sentence_transformers', 'mock'")
     model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     dimension: int = 384
 
@@ -56,9 +62,12 @@ class RerankerSettings(BaseModel):
     rrf_k: int = 60
 
 class SecuritySettings(BaseModel):
-    jwt_secret_key: str = "campusgrid_super_secret_jwt_key_replace_in_production_32b"
+    jwt_secret_key: str = DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 480
+    max_request_body_bytes: int = 1_048_576
+    login_max_failed_attempts: int = 5
+    login_lockout_minutes: int = 5
 
 class PhysicsSettings(BaseModel):
     comfort_min_temp_c: float = 21.0
@@ -114,9 +123,12 @@ class Settings(BaseSettings):
     campus_latitude: float = 6.9147
     campus_longitude: float = 79.9733
 
-    jwt_secret_key: str = "campusgrid_super_secret_jwt_key_replace_in_production_32b"
+    jwt_secret_key: str = DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 480
+    max_request_body_bytes: int = 1_048_576
+    login_max_failed_attempts: int = 5
+    login_lockout_minutes: int = 5
 
     comfort_min_temp_c: float = 21.0
     comfort_max_temp_c: float = 25.5
@@ -128,6 +140,32 @@ class Settings(BaseSettings):
         default=False,
         description="When True, container falls back to reference baseline algorithms for agents 1, 2, 4"
     )
+    reference_baseline_agents: str = Field(
+        default="",
+        description=(
+            "Comma-separated subset of 'agent1,agent2,agent4' to run on reference baselines while "
+            "the others run member code. Ignored when USE_REFERENCE_BASELINES=true (all three)."
+        )
+    )
+
+    @model_validator(mode="after")
+    def _validate_production_safety(self) -> "Settings":
+        if self.app_env == "production" and self.jwt_secret_key == DEFAULT_JWT_SECRET:
+            raise ValueError("JWT_SECRET_KEY must be changed from the .env.example default in production.")
+        unknown = self.baseline_agents - BASELINE_AGENT_KEYS
+        if unknown:
+            raise ValueError(
+                f"REFERENCE_BASELINE_AGENTS contains unknown entries {sorted(unknown)}; "
+                f"allowed: {sorted(BASELINE_AGENT_KEYS)}"
+            )
+        return self
+
+    @property
+    def baseline_agents(self) -> Set[str]:
+        """The agent slices that should be wired to their reference baseline."""
+        if self.use_reference_baselines:
+            return set(BASELINE_AGENT_KEYS)
+        return {a.strip().lower() for a in self.reference_baseline_agents.split(",") if a.strip()}
 
     @property
     def llm(self) -> LLMSettings:
@@ -184,6 +222,9 @@ class Settings(BaseSettings):
             jwt_secret_key=self.jwt_secret_key,
             jwt_algorithm=self.jwt_algorithm,
             access_token_expire_minutes=self.access_token_expire_minutes,
+            max_request_body_bytes=self.max_request_body_bytes,
+            login_max_failed_attempts=self.login_max_failed_attempts,
+            login_lockout_minutes=self.login_lockout_minutes,
         )
 
     @property
