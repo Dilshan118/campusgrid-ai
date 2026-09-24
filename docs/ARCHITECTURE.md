@@ -293,21 +293,21 @@ Two background jobs that run on a schedule, not during a request:
 
 | Layer | What we use | Status |
 |---|---|---|
-| Dashboard | React 18, Vite, Tailwind, Recharts | shell only |
+| Dashboard | React 18, Vite, Tailwind, Recharts | working (all pages in the UI/UX spec) |
 | Web server | FastAPI + Uvicorn | working |
-| Login & permissions | JWT tokens | **missing** |
-| Understanding questions | rule-based today; spaCy NER planned | partial |
+| Login & permissions | JWT tokens, 3 roles, per-route checks | working |
+| Understanding questions | rule-based entities + LLM intent router for unclear queries; spaCy NER planned | working |
 | Language model | LiteLLM → Gemini / OpenAI / Claude / Groq / Ollama | working |
-| Turning text into numbers | sentence-transformers (`all-MiniLM-L6-v2`) | built, switched off |
+| Turning text into numbers | sentence-transformers (`all-MiniLM-L6-v2`) | working (on in `.env.example`) |
 | Meaning-based search | pgvector inside PostgreSQL | built, untested live |
 | Keyword search | Okapi BM25, written by hand | working |
 | Combining search results | Reciprocal Rank Fusion | working |
-| Normal database | Neon PostgreSQL 16 | partly wired |
+| Normal database | Neon PostgreSQL 16 | wired (all repositories) |
 | Maths solver | PuLP with the CBC engine | reference version only |
 | Building physics | 2R2C thermal model | reference version only |
 | Forecasting model | LightGBM or scikit-learn | **missing** |
 | Tool protocol | MCP | **missing** |
-| Testing | pytest — 45 tests | working |
+| Testing | pytest — 142 tests | working |
 
 ---
 
@@ -490,13 +490,14 @@ titled `WIRE: <my class> into container`.
 | Setting in `.env` | Options | Wired up? |
 |---|---|---|
 | `LLM_PROVIDER` | mock · gemini · openai · anthropic · groq · ollama | ✅ yes |
-| `EMBEDDING_PROVIDER` | mock · sentence_transformers | ✅ yes (default is `mock` — change it) |
+| `EMBEDDING_PROVIDER` | mock · sentence_transformers | ✅ yes (`.env.example` uses real embeddings; mock disables the dense leg) |
 | `VECTOR_STORE_PROVIDER` | memory · pgvector · chroma | ✅ yes |
-| `DATABASE_PROVIDER` | in_memory · postgres | 🔶 half — two adapters missing |
+| `DATABASE_PROVIDER` | in_memory · postgres | ✅ yes — all five repositories, incl. analytics |
 | `CACHE_PROVIDER` | memory · redis | 🔶 memory only, and nothing uses the cache |
-| `RERANKER_STRATEGY` | rrf · cross_encoder · passthrough | ❌ **not wired — the setting does nothing** |
-| `WEATHER_PROVIDER` | open-meteo | ❌ **not wired — the tool ignores it** |
+| `RERANKER_STRATEGY` | rrf · passthrough | ✅ yes — `cross_encoder` stops startup with a clear error |
+| `WEATHER_PROVIDER` | open-meteo | ✅ validated — anything else stops startup |
 | `USE_REFERENCE_BASELINES` | true · false | ✅ yes — this is the "nobody is blocked" switch |
+| `REFERENCE_BASELINE_AGENTS` | any of agent1, agent2, agent4 | ✅ yes — baseline only the unfinished slices |
 
 ### The stand-in system — why nobody waits
 
@@ -527,7 +528,9 @@ your own code in the viva.
 - Swappable language model across 5 vendors plus an offline fake
 - Append-only audit log
 - Working stand-ins for all three developers' work
-- 45 tests: **37 pass, 8 skip.** The 8 skips are the unwritten parts.
+- 142 tests: **136 pass, 5 skip, 1 intentional fail.** The skips are Agent 2's unwritten physics; the
+  failure is TC-S2-01, a guard Member 2 wrote to fail once the Lead fixed their finding (see
+  `docs/TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md`).
 
 ### Missing
 
@@ -544,18 +547,23 @@ your own code in the viva.
 | The solver | Developer 3 | Agent 4 does nothing without it |
 | Integer variables in the solver | Developer 3 | Without them it is not truly a MILP |
 | Fairness tier rules | Developer 3 | Required Responsible AI element |
-| Login and permissions | Team Lead | Required security element |
-| Document ingestion | Team Lead | RAG corpus is 4 hardcoded clauses |
-| Entity extraction + smart routing | Team Lead | Required NLP; also the "agentic" mark |
-| Real analytics | Team Lead | Currently an in-memory list with invented numbers |
-| Dashboard screens | Team Lead | Only a navigation shell exists |
-| Search quality measurement | Team Lead | Cannot report IR scores without it |
+| ~~Login and permissions~~ | Team Lead | **Done** — JWT, 3 roles, lockout, logout |
+| ~~Document ingestion~~ | Team Lead | **Done** — Markdown/TXT/PDF, screening, de-duplication |
+| Entity extraction + smart routing | Team Lead | **Done** except spaCy (rule entities + LLM router) |
+| ~~Real analytics~~ | Team Lead | **Done** — funnel, A/B z-test, intent clusters, MRR |
+| ~~Dashboard screens~~ | Team Lead | **Done** — built to `docs/SYSTEM_USER_FLOW_AND_UIUX_SPEC.md` |
+| ~~Search quality measurement~~ | Team Lead | **Done** — 30-query benchmark, in the test suite |
 
 ---
 
 ## 9. Problems to fix before continuing
 
 Found by reading the code. Ordered by how much they matter.
+
+> **Status on 24 September 2026:** #3, #4 and #5 are fixed (Team Lead). #1, #6, #7 and #9 are still
+> open and belong to their owners. #2 is done for Students 1 and 2. The current, complete list of open
+> items per member and the cross-member integration issues is in
+> [`TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md`](TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md).
 
 ### Serious
 
@@ -920,7 +928,7 @@ cd "IRWA project"
 python3 -m venv venv && source venv/bin/activate
 pip install -e ".[all]"
 cp .env.example .env
-pytest tests/ -v          # you should see 37 passed
+pytest tests/ -v          # 136 passed, 5 skipped (Agent 2 physics), 1 known fail (TC-S2-01)
 ```
 
 If those 37 tests do not pass, stop and tell the Team Lead. Do not start working.

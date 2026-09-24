@@ -18,6 +18,10 @@ class MockEmbeddingProvider(EmbeddingProvider):
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def is_semantic(self) -> bool:
+        return False
+
     def _hash_to_vector(self, text: str) -> List[float]:
         """Generates a reproducible, unit-normalized float vector from text."""
         # Use md5 hash rounds to seed floats

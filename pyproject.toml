@@ -18,7 +18,9 @@ dependencies = [
     "sqlalchemy>=2.0.30",
     "pulp>=2.8.0",
     "litellm>=1.40.0",
+    "pyjwt>=2.8.0",
 ]
+
 
 [project.optional-dependencies]
 # Neon / PostgreSQL + pgvector. The pgvector extension is server-side; the

@@ -20,6 +20,10 @@ class OptimizationInput(BaseModel):
     max_soc_ratio: float = Field(default=0.90, ge=0.0, le=1.0)
     round_trip_efficiency: float = Field(default=0.92, gt=0.0, le=1.0)
     peak_demand_penalty_lkr_kva: float = Field(default=1100.0, description="Monthly peak surcharge")
+    max_grid_import_kw: Optional[float] = Field(default=None, description="Maximum utility grid interconnect capacity in kW")
+    tier0_load_kw: Optional[List[float]] = Field(default=None, description="Non-curtailable critical load profile (kW)")
+    tier1_load_kw: Optional[List[float]] = Field(default=None, description="Temperature-flexible load profile (kW)")
+    tier2_load_kw: Optional[List[float]] = Field(default=None, description="Curtailable/shiftable load profile (kW)")
 
 class BindingConstraint(BaseModel):
     """Represents an active limit restricting the optimal solution."""
