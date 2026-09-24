@@ -19,7 +19,7 @@ from src.api.routes.common import agent_response, default_planning_date
 router = APIRouter(prefix="/api/optimizer", tags=["Dispatch Optimizer"])
 
 @router.post("/dispatch", response_model=APIResponse)
-async def solve_dispatch(
+def solve_dispatch(
     request: OptimizationRunRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)

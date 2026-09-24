@@ -14,7 +14,7 @@ from src.api.routes.common import agent_response, default_planning_date
 router = APIRouter(prefix="/api/simulation", tags=["Digital Twin Simulation"])
 
 @router.post("/what-if", response_model=APIResponse)
-async def run_what_if_simulation(
+def run_what_if_simulation(
     request: WhatIfSimulationRequest,
     _user=Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)
@@ -26,7 +26,9 @@ async def run_what_if_simulation(
     ambients = weather_res.data.get("temperature_series_c", [28.0] * 48)
 
     historical = container.meter_repo.get_historical_profile(target_date)
-    occupancies = [item.zone_occupancy_count for item in historical]
+    occupancies, capped, capacity = container.orchestrator.room_level_occupancy(
+        request.room, [item.zone_occupancy_count for item in historical]
+    )
 
     res = container.agent2_twin.execute({
         "initial_temp_c": request.initial_temp_c,
@@ -40,4 +42,7 @@ async def run_what_if_simulation(
     response = agent_response(res)
     response.data["weather_source"] = weather_res.data.get("source")
     response.data["target_date"] = target_date
+    response.data["room"] = request.room.upper()
+    response.data["occupancy_capped_intervals"] = capped
+    response.data["room_capacity"] = capacity
     return response

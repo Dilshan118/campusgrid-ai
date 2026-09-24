@@ -16,7 +16,7 @@ from src.domain.entities.analytics import AnalyticsEvent, EVENT_DECISION_APPROVE
 router = APIRouter(prefix="/api/audit", tags=["Audit Trail"])
 
 @router.get("/logs", response_model=APIResponse)
-async def list_audit_logs(
+def list_audit_logs(
     limit: int = Query(default=20, ge=1, le=100),
     record_type: Optional[str] = Query(default=None, max_length=40),
     status: Optional[str] = Query(default=None, max_length=20),
@@ -32,7 +32,7 @@ async def list_audit_logs(
     )
 
 @router.get("/logs/{log_id}", response_model=APIResponse)
-async def get_audit_log(
+def get_audit_log(
     log_id: int,
     _user=Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
@@ -40,7 +40,7 @@ async def get_audit_log(
     return APIResponse(success=True, data=container.audit_service.get_record_view(log_id))
 
 @router.get("/pending", response_model=APIResponse)
-async def list_pending_recommendations(
+def list_pending_recommendations(
     limit: int = Query(default=20, ge=1, le=100),
     _user=Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
@@ -48,7 +48,7 @@ async def list_pending_recommendations(
     return APIResponse(success=True, data=container.audit_service.list_pending(limit=limit))
 
 @router.post("/approve", response_model=APIResponse)
-async def decide_recommendation(
+def decide_recommendation(
     request: AuditApprovalRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_APPROVERS)),
     container: Container = Depends(get_app_container)
@@ -74,7 +74,7 @@ async def decide_recommendation(
     return APIResponse(success=True, data=decision)
 
 @router.get("/verify", response_model=APIResponse)
-async def verify_audit_chain(
+def verify_audit_chain(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):
