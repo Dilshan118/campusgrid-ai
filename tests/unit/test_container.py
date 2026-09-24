@@ -10,6 +10,7 @@ from src.infrastructure.cache.memory_cache import MemoryCacheProvider
 
 def test_container_mock_providers():
     settings = Settings(
+        app_env="test",
         llm_provider="mock",
         vector_store_provider="memory",
         database_provider="in_memory",
