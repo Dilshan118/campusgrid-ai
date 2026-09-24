@@ -12,7 +12,9 @@ Each intent runs only the agents it needs:
     out_of_scope        no agents
 """
 
+import contextvars
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
 from src.agents.coordinator.nlp_parser import (
@@ -41,6 +43,9 @@ from src.domain.entities.audit import (
 from src.domain.exceptions.base import DomainException
 from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C
 from src.shared.datetime_utils import build_tou_tariff_profile
+
+# Shared by every orchestrator instance: Agent 3 runs here while Agents 1 and 2 run on the request thread.
+_PARALLEL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cg-agent")
 
 OUT_OF_SCOPE_MESSAGE = (
     "CampusGrid AI can help with day-ahead energy forecasts, what-if comfort simulations, "
@@ -81,6 +86,8 @@ class CampusGridOrchestrator(BaseAgent):
         llm_routing_threshold: float = 0.6,
         comfort_min_c: float = COMFORT_TEMP_MIN_C,
         comfort_max_c: float = COMFORT_TEMP_MAX_C,
+        battery_limits: Optional[Dict[str, float]] = None,
+        parallel_agents: bool = True,
     ):
         super().__init__(
             name="Central Orchestrator",
@@ -96,6 +103,8 @@ class CampusGridOrchestrator(BaseAgent):
         self.llm_routing_threshold = llm_routing_threshold
         self.comfort_min_c = comfort_min_c
         self.comfort_max_c = comfort_max_c
+        self.battery_limits = battery_limits or {}
+        self.parallel_agents = parallel_agents
 
     # ------------------------------------------------------------------
 
@@ -123,6 +132,12 @@ class CampusGridOrchestrator(BaseAgent):
         if action == ACTION_POLICY_LOOKUP:
             return self._handle_policy_lookup(context)
 
+        # Agent 3 depends only on the question, not on the forecast or the comfort check, so for a
+        # dispatch plan it runs concurrently with Agents 1 -> 2. Agent 4 waits for all three.
+        a3_future: Optional[Future] = None
+        if action == ACTION_OPTIMIZE_DISPATCH:
+            a3_future = self._start_agent3(user_query)
+
         a1_res = self.agent1.execute({
             "date": parsed["date"],
             "room": parsed["room"],
@@ -134,11 +149,17 @@ class CampusGridOrchestrator(BaseAgent):
         if action == ACTION_TELEMETRY_STATUS:
             return self._handle_forecast_only(context, a1_res)
 
+        occupancy, capped, capacity = self.room_level_occupancy(parsed["room"], a1_res.data.get("occupancy_counts", []))
+        if capped:
+            parsed.setdefault("notes", []).append(
+                f"Occupancy was capped at {parsed['room']}'s capacity ({capacity}) for {capped} half-hours; "
+                "the forecast's headcounts are campus-wide."
+            )
         a2_res = self.agent2.execute({
             "initial_temp_c": parsed.get("target_temp_c", 24.0),
             "target_setpoint_c": parsed.get("target_temp_c", 24.0),
             "ambient_temperatures_c": a1_res.data.get("ambient_temperatures_c", []),
-            "occupancy_counts": a1_res.data.get("occupancy_counts", []),
+            "occupancy_counts": occupancy,
             # Explicit dashboard slider values win; otherwise use what the query text asked for.
             "perturb_temp_delta_c": self._override(input_data, parsed, "perturb_temp_delta_c", 0.0),
             "perturb_occ_multiplier": self._override(input_data, parsed, "perturb_occ_multiplier", 1.0),
@@ -151,7 +172,7 @@ class CampusGridOrchestrator(BaseAgent):
         if action == ACTION_WHAT_IF_SIMULATION:
             return self._handle_simulation(context, a1_res, a2_res)
 
-        return self._handle_dispatch(context, a1_res, a2_res)
+        return self._handle_dispatch(context, a1_res, a2_res, a3_future)
 
     # ------------------------------------------------------------------
     # Intent understanding
@@ -237,9 +258,19 @@ class CampusGridOrchestrator(BaseAgent):
             digital_twin_feasibility=a2_res.data,
         )
 
-    def _handle_dispatch(self, ctx: Dict[str, Any], a1_res, a2_res) -> Dict[str, Any]:
+    def _start_agent3(self, query: str) -> Optional[Future]:
+        if not self.parallel_agents:
+            return None
+        run_in_context = contextvars.copy_context().run  # keeps the request ID in Agent 3's trace logs
+        return _PARALLEL_POOL.submit(run_in_context, self.agent3.execute, self._agent3_dispatch_input(query))
+
+    @staticmethod
+    def _agent3_dispatch_input(query: str) -> Dict[str, Any]:
+        return {"query": query, "top_k": 2, "include_tariff_constraints": True}
+
+    def _handle_dispatch(self, ctx: Dict[str, Any], a1_res, a2_res, a3_future: Optional[Future] = None) -> Dict[str, Any]:
         parsed = ctx["parsed"]
-        a3_res = self.agent3.execute({"query": ctx["query"], "top_k": 2, "include_tariff_constraints": True})
+        a3_res = a3_future.result() if a3_future is not None else self.agent3.execute(self._agent3_dispatch_input(ctx["query"]))
         if not a3_res.success:
             raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
@@ -302,6 +333,16 @@ class CampusGridOrchestrator(BaseAgent):
             "forecast_summary": a1_res.data.get("forecast_summary"),
             "warnings": warnings,
         }
+        # Stored with the plan so a reviewer can render it from the audit record alone.
+        final_decision["explanation_concise"] = self._concise_explanation(final_decision["solver_summary"])
+        final_decision["citations"] = citations
+        final_decision["battery_limits"] = self.battery_limits
+        final_decision["assumptions"] = list(parsed.get("notes", []))
+        demand = a1_res.data.get("forecast_demand_kw", [])
+        solar = a1_res.data.get("forecast_solar_kw", [])
+        final_decision["baseline_grid_kw"] = [
+            round(max(0.0, d - (solar[i] if i < len(solar) else 0.0)), 1) for i, d in enumerate(demand)
+        ]
 
         agent_sequence = {
             "agent1_telemetry": a1_res.model_dump(),
@@ -316,7 +357,7 @@ class CampusGridOrchestrator(BaseAgent):
             status="ready_for_operator_approval",
             recommendation=final_decision,
             explanation=a4_res.data.get("explanation"),
-            explanation_concise=self._concise_explanation(final_decision["solver_summary"]),
+            explanation_concise=final_decision["explanation_concise"],
             citations=citations,
             requires_human_approval=True,
             digital_twin_feasibility=a2_res.data,
@@ -326,6 +367,16 @@ class CampusGridOrchestrator(BaseAgent):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def room_level_occupancy(self, room_id: str, counts: List[int]):
+        """Hand-off check between Agent 1 and Agent 2: the digital twin simulates ONE room, but the
+        forecast's headcounts can be campus-wide. Counts above the room's capacity are capped.
+        Returns (counts, number_capped, capacity)."""
+        capacity = (self.nlp_parser.rooms.get(str(room_id).upper()) or {}).get("max_capacity")
+        if not capacity:
+            return list(counts), 0, None
+        capped = sum(1 for c in counts if c > capacity)
+        return [min(int(c), int(capacity)) for c in counts], capped, capacity
 
     def _apply_structured_overrides(self, parsed: Dict[str, Any], input_data: Dict[str, Any]) -> None:
         """Room / date chosen in a form (not typed in the query) replace the parsed values."""

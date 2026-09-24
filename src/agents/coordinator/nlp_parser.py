@@ -167,7 +167,9 @@ class NLPQueryParser:
         for match in re.finditer(temp_pattern, query_lower):
             value = float(match.group(1))
             prefix = query_lower[max(0, match.start() - 12):match.start()]
-            if re.search(r"(?:\+|\bplus\s*|\brise\s+of\s*|\bby\s*|\bincrease\s+of\s*)$", prefix):
+            suffix = query_lower[match.end():match.end() + 12]
+            if (re.search(r"(?:\+|\bplus\s*|\brise\s+of\s*|\bby\s*|\bincrease\s+of\s*)$", prefix)
+                    or re.match(r"\s*(?:hotter|warmer|higher|above normal)\b", suffix)):
                 delta_temp = max(-10.0, min(15.0, value))
                 continue
             if target_found:
