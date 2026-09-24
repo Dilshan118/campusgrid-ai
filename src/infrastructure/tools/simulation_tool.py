@@ -1,11 +1,28 @@
 """
 CampusGrid AI: Simulation Tool (MCP-Compliant)
 Executes 2R2C continuous thermal physics equations and evaluates ASHRAE-55 comfort feasibility.
+
+Delegates the actual 2R2C differential equation to `BuildingThermalTwin`
+(src/agents/digital_twin/thermal_model.py) so there is exactly one implementation of
+the physics in the codebase — this tool is a thin MCP-facing wrapper around it.
 """
 
 import time
 from typing import Dict, Any, List
 from src.domain.interfaces.tool import Tool, ToolResult
+from src.agents.digital_twin.thermal_model import BuildingThermalTwin
+from src.config.settings import get_settings
+
+# Hard physical plausibility envelope for the tool boundary. Independent of the ASHRAE-55
+# comfort band (that is a target range for the *output*; these are sanity bounds on the
+# *inputs* a caller — human, LLM, or a spoofed MCP client — is allowed to command).
+MIN_PHYSICAL_TEMP_C = 10.0
+MAX_PHYSICAL_TEMP_C = 45.0
+MAX_OCCUPANTS_PER_ZONE = 5000
+MAX_HVAC_POWER_KW = 1000.0
+# The whole pipeline is built around a 48 half-hour-interval horizon. Anything longer is
+# not a real dispatch request — it is either a bug or a compute-exhaustion attempt.
+MAX_INTERVALS = 48
 
 class SimulationTool(Tool):
     """MCP tool executing building thermal grey-box differential equations."""
@@ -13,6 +30,7 @@ class SimulationTool(Tool):
     def __init__(self, c_in: float = 50.0, r_vent: float = 2.5):
         self.c_in = c_in
         self.r_vent = r_vent
+        self.thermal_twin = BuildingThermalTwin(c_in=c_in, r_vent=r_vent)
 
     @property
     def name(self) -> str:
@@ -36,43 +54,101 @@ class SimulationTool(Tool):
             }
         }
 
+    def _validate_bounds(
+        self,
+        initial_temp: float,
+        ambient_temps: List[float],
+        occupants: List[int],
+        hvac_powers: List[float],
+    ) -> None:
+        """Rejects physically impossible parameters before any equation runs.
+
+        Raises ValueError with a message identifying exactly which value and bound was
+        violated — this is the tool-boundary rejection the MCP security audit tests against
+        (e.g. commanding -15C or 5000kW must fail here, not silently produce nonsense output).
+        """
+        if not (MIN_PHYSICAL_TEMP_C <= initial_temp <= MAX_PHYSICAL_TEMP_C):
+            raise ValueError(
+                f"initial_temp_c={initial_temp} outside physical envelope "
+                f"[{MIN_PHYSICAL_TEMP_C}, {MAX_PHYSICAL_TEMP_C}]"
+            )
+        if not (len(ambient_temps) == len(occupants) == len(hvac_powers)):
+            raise ValueError(
+                "ambient_temps, occupant_counts and hvac_power_kw must be equal length "
+                f"(got {len(ambient_temps)}, {len(occupants)}, {len(hvac_powers)})"
+            )
+        if len(ambient_temps) > MAX_INTERVALS:
+            raise ValueError(
+                f"{len(ambient_temps)} intervals requested, exceeds the {MAX_INTERVALS}-interval "
+                "horizon this pipeline is designed for"
+            )
+        for t_amb in ambient_temps:
+            if not (MIN_PHYSICAL_TEMP_C <= t_amb <= MAX_PHYSICAL_TEMP_C):
+                raise ValueError(
+                    f"ambient temperature {t_amb} outside physical envelope "
+                    f"[{MIN_PHYSICAL_TEMP_C}, {MAX_PHYSICAL_TEMP_C}]"
+                )
+        for occ in occupants:
+            if not (0 <= occ <= MAX_OCCUPANTS_PER_ZONE):
+                raise ValueError(
+                    f"occupant_count {occ} outside plausible zone capacity [0, {MAX_OCCUPANTS_PER_ZONE}]"
+                )
+        for q_hvac in hvac_powers:
+            if not (0 <= q_hvac <= MAX_HVAC_POWER_KW):
+                raise ValueError(
+                    f"hvac_power_kw {q_hvac} outside rated plant capacity [0, {MAX_HVAC_POWER_KW}]"
+                )
+
     def execute(self, **kwargs) -> ToolResult:
         start_time = time.time()
-        initial_temp = float(kwargs.get("initial_temp_c", 24.0))
-        ambient_temps = kwargs.get("ambient_temps", [])
-        occupants = kwargs.get("occupant_counts", [])
-        hvac_powers = kwargs.get("hvac_power_kw", [])
-        dt_hours = float(kwargs.get("dt_hours", 0.5))
 
-        temp_history = [initial_temp]
+        # Type coercion is part of the boundary, not a pre-condition for it: a caller
+        # (human, LLM, or a spoofed MCP client) sending a non-numeric value here must
+        # get a graceful rejection, not an unhandled exception that crashes the caller.
+        try:
+            initial_temp = float(kwargs.get("initial_temp_c", 24.0))
+            ambient_temps = [float(t) for t in kwargs.get("ambient_temps", [])]
+            occupants = [int(o) for o in kwargs.get("occupant_counts", [])]
+            hvac_powers = [float(p) for p in kwargs.get("hvac_power_kw", [])]
+            dt_hours = float(kwargs.get("dt_hours", 0.5))
+            self._validate_bounds(initial_temp, ambient_temps, occupants, hvac_powers)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=str(exc),
+                execution_time_ms=(time.time() - start_time) * 1000.0,
+            )
+
+        indoor_temps = self.thermal_twin.simulate(
+            initial_temp_c=initial_temp,
+            ambient_temps=ambient_temps,
+            occupant_counts=occupants,
+            hvac_power_kw=hvac_powers,
+            dt_hours=dt_hours,
+        )
+
+        comfort_min = get_settings().physics.comfort_min_temp_c
+        comfort_max = get_settings().physics.comfort_max_temp_c
         violations = 0
         max_deviation = 0.0
-
-        for t_amb, occ, q_hvac in zip(ambient_temps, occupants, hvac_powers):
-            q_occ = occ * 0.10  # 100 Watts per student body
-            q_transfer = (t_amb - temp_history[-1]) / self.r_vent
-            delta_t = (q_transfer + q_occ - q_hvac) * (dt_hours / self.c_in)
-            next_temp = round(temp_history[-1] + delta_t, 2)
-            temp_history.append(next_temp)
-
-            # Check ASHRAE-55 limits (21.0°C - 25.5°C)
-            if next_temp < 21.0 or next_temp > 25.5:
+        for temp in indoor_temps:
+            if temp < comfort_min or temp > comfort_max:
                 violations += 1
-                dev = max(21.0 - next_temp, next_temp - 25.5)
-                if dev > max_deviation:
-                    max_deviation = dev
+                deviation = max(comfort_min - temp, temp - comfort_max)
+                max_deviation = max(max_deviation, deviation)
 
         elapsed = (time.time() - start_time) * 1000.0
 
         return ToolResult(
             success=True,
             data={
-                "indoor_temperatures_c": temp_history[1:],
+                "indoor_temperatures_c": indoor_temps,
                 "comfort_violation_count": violations,
                 "max_temp_deviation_c": round(max_deviation, 2),
                 "is_feasible": (violations == 0),
-                "min_observed_c": min(temp_history[1:]) if len(temp_history) > 1 else initial_temp,
-                "max_observed_c": max(temp_history[1:]) if len(temp_history) > 1 else initial_temp
+                "min_observed_c": min(indoor_temps) if indoor_temps else initial_temp,
+                "max_observed_c": max(indoor_temps) if indoor_temps else initial_temp
             },
             execution_time_ms=elapsed
         )
