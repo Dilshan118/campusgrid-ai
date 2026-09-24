@@ -50,7 +50,7 @@ ROLE_PERMISSIONS = {
         "description": "Full access: plans, simulations, dispatch approval, knowledge base management, analytics and audit.",
         "permissions": [
             "orchestrator:query", "simulation:run", "optimizer:run", "telemetry:read",
-            "rag:search", "rag:ingest", "audit:read", "audit:approve", "analytics:read",
+            "rag:search", "rag:ingest", "audit:read", "audit:approve", "analytics:read", "system:read",
         ],
     },
     ROLE_OPERATOR: {
@@ -76,7 +76,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login", response_model=APIResponse)
-async def login(request: LoginRequest):
+def login(request: LoginRequest):
     username = request.username.strip().lower()
     login_throttle.check(username)
 
@@ -103,14 +103,14 @@ async def login(request: LoginRequest):
 
 
 @router.post("/logout", response_model=APIResponse)
-async def logout(current_user: Dict[str, Any] = Depends(get_current_user)):
+def logout(current_user: Dict[str, Any] = Depends(get_current_user)):
     if current_user.get("jti"):
         revoke_token(current_user["jti"], float(current_user.get("exp") or 0))
     return APIResponse(success=True, data={"logged_out": True})
 
 
 @router.get("/me", response_model=APIResponse)
-async def get_my_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
+def get_my_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
     user_info = DEMO_USERS.get(current_user["user_id"], {})
     role = current_user["role"]
     return APIResponse(
@@ -126,7 +126,7 @@ async def get_my_profile(current_user: Dict[str, Any] = Depends(get_current_user
 
 
 @router.get("/roles", response_model=APIResponse)
-async def list_roles():
+def list_roles():
     return APIResponse(
         success=True,
         data={

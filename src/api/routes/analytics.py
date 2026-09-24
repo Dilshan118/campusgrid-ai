@@ -18,7 +18,7 @@ from src.domain.exceptions.base import DomainException
 router = APIRouter(prefix="/api/analytics", tags=["Web Analytics"])
 
 @router.post("/event", response_model=APIResponse)
-async def record_funnel_event(
+def record_funnel_event(
     request: AnalyticsEventRequest,
     user: Dict[str, Any] = Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
@@ -43,42 +43,42 @@ async def record_funnel_event(
     return APIResponse(success=True, data={"event_id": event_id})
 
 @router.get("/ab/assignment", response_model=APIResponse)
-async def get_my_ab_variant(
+def get_my_ab_variant(
     user: Dict[str, Any] = Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data={"ab_variant": container.analytics_service.assign_variant(user["user_id"])})
 
 @router.get("/summary", response_model=APIResponse)
-async def get_analytics_summary(
+def get_analytics_summary(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.analytics_service.summary())
 
 @router.get("/funnel", response_model=APIResponse)
-async def get_acceptance_funnel(
+def get_acceptance_funnel(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.analytics_service.acceptance_funnel())
 
 @router.get("/ab-test", response_model=APIResponse)
-async def get_ab_test_results(
+def get_ab_test_results(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.analytics_service.ab_test())
 
 @router.get("/query-clusters", response_model=APIResponse)
-async def get_query_clusters(
+def get_query_clusters(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.analytics_service.query_clusters())
 
 @router.get("/citation-ctr", response_model=APIResponse)
-async def get_citation_click_through(
+def get_citation_click_through(
     _user=Depends(require_roles(ROLES_ANALYTICS_VIEWERS)),
     container: Container = Depends(get_app_container)
 ):

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/telemetry", tags=["Telemetry & Forecasting"])
 PRIVACY_EPSILON = 1.0
 
 @router.get("/historical", response_model=APIResponse)
-async def get_historical_telemetry(
+def get_historical_telemetry(
     response: Response,
     date: str = Query(default="2026-09-06", max_length=10),
     _user=Depends(require_roles(ROLES_PLANNERS)),
@@ -32,7 +32,7 @@ async def get_historical_telemetry(
     )
 
 @router.get("/forecast", response_model=APIResponse)
-async def get_day_ahead_forecast(
+def get_day_ahead_forecast(
     date: Optional[str] = Query(default=None, max_length=10),
     room: str = Query(default="LH-1", max_length=20),
     _user=Depends(require_roles(ROLES_PLANNERS)),

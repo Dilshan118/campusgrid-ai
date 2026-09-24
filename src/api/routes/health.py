@@ -11,7 +11,7 @@ from src.api.dependencies.container import get_app_container
 router = APIRouter(prefix="/api/health", tags=["Health"])
 
 @router.get("", response_model=HealthResponse)
-async def health_check(container: Container = Depends(get_app_container)):
+def health_check(container: Container = Depends(get_app_container)):
     return HealthResponse(
         status="online",
         system=container.settings.app_name,

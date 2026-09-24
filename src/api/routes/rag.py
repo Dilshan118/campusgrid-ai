@@ -17,7 +17,7 @@ from src.domain.entities.audit import RECORD_KNOWLEDGE_INGESTION
 router = APIRouter(prefix="/api/rag", tags=["Policy & RAG"])
 
 @router.post("/search", response_model=APIResponse)
-async def search_regulatory_clauses(
+def search_regulatory_clauses(
     request: RAGSearchRequest,
     user: Dict[str, Any] = Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
@@ -39,14 +39,14 @@ async def search_regulatory_clauses(
     return response
 
 @router.get("/documents", response_model=APIResponse)
-async def list_indexed_documents(
+def list_indexed_documents(
     _user=Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.retrieval_service.index_stats())
 
 @router.post("/ingest", response_model=APIResponse)
-async def ingest_regulatory_document(
+def ingest_regulatory_document(
     request: RAGIngestRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_KNOWLEDGE_ADMINS)),
     container: Container = Depends(get_app_container)

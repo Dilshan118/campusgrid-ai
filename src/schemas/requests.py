@@ -29,6 +29,7 @@ class WhatIfSimulationRequest(BaseModel):
     ambient_temp_delta_c: float = Field(default=0.0, ge=-10.0, le=15.0)
     occupancy_multiplier: float = Field(default=1.0, ge=0.0, le=5.0)
     date: Optional[str] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Weather date; defaults to tomorrow")
+    room: str = Field(default="LH-1", max_length=20, description="Room whose capacity bounds the simulated occupancy")
 
 class OptimizationRunRequest(BaseModel):
     battery_capacity_kwh: float = Field(default=500.0, gt=0, le=10_000)

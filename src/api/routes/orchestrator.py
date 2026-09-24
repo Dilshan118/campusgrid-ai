@@ -16,7 +16,7 @@ from src.domain.entities.analytics import AnalyticsEvent, EVENT_QUERY_SUBMITTED
 router = APIRouter(prefix="/api/orchestrator", tags=["Multi-Agent Orchestrator"])
 
 @router.post("/query", response_model=APIResponse)
-async def process_operator_query(
+def process_operator_query(
     request: OperatorQueryRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)
