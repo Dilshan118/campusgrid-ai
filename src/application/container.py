@@ -51,6 +51,12 @@ from src.agents.dispatch_explanation.agent import DispatchExplanationAgent
 from src.agents.coordinator.agent import CampusGridOrchestrator
 from src.agents.coordinator.nlp_parser import NLPQueryParser
 from src.agents.coordinator.intent_router import LLMIntentRouter
+from src.agents.telemetry.forecaster import DemandForecaster
+from src.agents.digital_twin.thermal_model import BuildingThermalTwin
+from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
+from src.agents.dispatch_explanation.milp_solver import CampusMicrogridOptimizer
+from src.domain.entities.telemetry import TelemetryInterval
+from src.domain.entities.optimization import OptimizationInput
 from src.infrastructure.reference_baselines import (
     BaselineDemandForecaster,
     BaselineBuildingThermalTwin,
@@ -59,6 +65,38 @@ from src.infrastructure.reference_baselines import (
 )
 
 logger = logging.getLogger("campusgrid.container")
+
+
+# Tiny inputs that let the container tell "not written yet" (NotImplementedError) apart from working
+# code at startup. Any other exception means the code exists; it is left in place and fails loudly
+# at request time rather than being hidden behind a baseline.
+def _probe_forecaster(forecaster):
+    interval = TelemetryInterval(time_slot="12:00", base_load_kw=400.0, solar_gen_kw=100.0, outdoor_temp_c=30.0,
+                                 grid_tariff_lkr_kwh=30.0, zone_occupancy_count=50)
+    forecaster.predict([interval], [30.0], [50])
+
+
+def _probe_thermal(twin):
+    twin.simulate(initial_temp_c=24.0, ambient_temps=[28.0], occupant_counts=[0], hvac_power_kw=[0.0])
+
+
+def _probe_battery(battery):
+    battery.simulate_soc_trajectory(250.0, [0.0], [0.0])
+
+
+def _probe_optimizer(optimizer):
+    optimizer.solve(OptimizationInput(time_slots=["00:00", "00:30"], base_load_kw=[100.0, 100.0],
+                                      solar_gen_kw=[0.0, 0.0], grid_tariff_lkr_kwh=[15.0, 15.0]))
+
+
+def _implemented(probe, target) -> bool:
+    try:
+        probe(target)
+    except NotImplementedError:
+        return False
+    except Exception as exc:  # implemented but unhappy with the probe input — keep member code
+        logger.debug("Startup probe of %s raised %s; keeping member implementation.", type(target).__name__, exc)
+    return True
 
 
 def _build_reranker(strategy: str, rrf_k: int) -> Reranker:
@@ -134,6 +172,7 @@ class Container:
             keyword_engine=self.keyword_engine,
             reranker=self.reranker,
             ingestion_pipeline=self.ingestion_pipeline,
+            cache=self.cache_provider,
         )
         self.audit_service = AuditService(audit_repo=self.audit_repo)
         self.analytics_service = AnalyticsService(event_repo=self.analytics_repo)
@@ -142,36 +181,44 @@ class Container:
         # Each of agents 1, 2 and 4 runs member code unless it is listed in the baseline set
         # (USE_REFERENCE_BASELINES=true selects all three; REFERENCE_BASELINE_AGENTS picks some),
         # so a finished slice is never replaced just because another slice is unfinished.
-        self.baseline_agents = self.settings.baseline_agents
+        # With AUTO_BASELINE_FALLBACK (default on), a slice whose member code still raises
+        # NotImplementedError is swapped for its baseline at startup and reported in /api/health.
         physics = self.settings.physics
+        self.baseline_agents = set(self.settings.baseline_agents)
+        self.slice_notes: Dict[str, str] = {a: "configured" for a in self.baseline_agents}
+
+        forecaster = self._forecaster(baseline="agent1" in self.baseline_agents)
+        thermal_twin, battery = self._twin_models(baseline="agent2" in self.baseline_agents)
+        optimizer = self._optimizer(baseline="agent4" in self.baseline_agents)
+
+        if self.settings.auto_baseline_fallback:
+            if "agent1" not in self.baseline_agents and not _implemented(_probe_forecaster, forecaster):
+                forecaster = self._forecaster(baseline=True)
+                self._mark_auto("agent1")
+            if "agent2" not in self.baseline_agents and not (
+                _implemented(_probe_thermal, thermal_twin) and _implemented(_probe_battery, battery)
+            ):
+                thermal_twin, battery = self._twin_models(baseline=True)
+                self._mark_auto("agent2")
+            if "agent4" not in self.baseline_agents and not _implemented(_probe_optimizer, optimizer):
+                optimizer = self._optimizer(baseline=True)
+                self._mark_auto("agent4")
 
         self.agent1_telemetry = TelemetryForecastingAgent(
             meter_repo=self.meter_repo,
             timetable_repo=self.timetable_repo,
             weather_tool=self.weather_tool,
-            forecaster=BaselineDemandForecaster() if "agent1" in self.baseline_agents else None,
+            forecaster=forecaster,
             llm_provider=self.llm_provider,
         )
-        if "agent2" in self.baseline_agents:
-            self.agent2_twin = DigitalTwinAgent(
-                simulation_tool=self.simulation_tool,
-                thermal_twin=BaselineBuildingThermalTwin(c_in=physics.building_c_in, r_vent=physics.building_r_vent),
-                battery_dynamics=BaselineBatteryDynamicsModel(
-                    capacity_kwh=physics.battery_capacity_kwh,
-                    max_power_kw=physics.battery_max_power_kw,
-                    min_soc_pct=physics.battery_min_soc,
-                    max_soc_pct=physics.battery_max_soc
-                )
-            )
-        else:
-            self.agent2_twin = DigitalTwinAgent(simulation_tool=self.simulation_tool)
-
+        self.agent2_twin = DigitalTwinAgent(
+            simulation_tool=self.simulation_tool,
+            thermal_twin=thermal_twin,
+            battery_dynamics=battery,
+        )
         self.agent4_dispatch = DispatchExplanationAgent(
             llm_provider=self.llm_provider,
-            optimizer=BaselineCampusMicrogridOptimizer(
-                battery_cap_kwh=physics.battery_capacity_kwh,
-                max_kw=physics.battery_max_power_kw
-            ) if "agent4" in self.baseline_agents else None,
+            optimizer=optimizer,
         )
 
         self.agent3_rag = PolicyRAGAgent(
@@ -194,7 +241,20 @@ class Container:
             intent_router=LLMIntentRouter(llm_provider=self.llm_provider),
             comfort_min_c=physics.comfort_min_temp_c,
             comfort_max_c=physics.comfort_max_temp_c,
+            battery_limits={
+                "capacity_kwh": physics.battery_capacity_kwh,
+                "min_soc_kwh": physics.battery_capacity_kwh * physics.battery_min_soc,
+                "max_soc_kwh": physics.battery_capacity_kwh * physics.battery_max_soc,
+                "max_power_kw": physics.battery_max_power_kw,
+            },
         )
+
+    def nlp_parser_rooms(self) -> List[Dict[str, Any]]:
+        """Room inventory as the NLP parser knows it (what the dashboard offers in pickers)."""
+        return [
+            {k: room.get(k) for k in ("room_id", "building_name", "room_type", "max_capacity")}
+            for room in self.nlp_parser.rooms.values()
+        ]
 
     def _room_inventory(self) -> Optional[List[Dict[str, Any]]]:
         try:
@@ -203,13 +263,47 @@ class Container:
             logger.warning("Room inventory unavailable (%s); NLP parser falls back to the seed rooms.", type(e).__name__)
             return None
 
+    # -- slice construction (member code or reference baseline, always from settings) --------
+
+    def _forecaster(self, baseline: bool):
+        return BaselineDemandForecaster() if baseline else DemandForecaster()
+
+    def _twin_models(self, baseline: bool):
+        p = self.settings.physics
+        if baseline:
+            return (
+                BaselineBuildingThermalTwin(c_in=p.building_c_in, r_vent=p.building_r_vent),
+                BaselineBatteryDynamicsModel(capacity_kwh=p.battery_capacity_kwh, max_power_kw=p.battery_max_power_kw,
+                                             min_soc_pct=p.battery_min_soc, max_soc_pct=p.battery_max_soc),
+            )
+        return (
+            BuildingThermalTwin(c_in=p.building_c_in, r_vent=p.building_r_vent),
+            BatteryDynamicsModel(capacity_kwh=p.battery_capacity_kwh, max_power_kw=p.battery_max_power_kw,
+                                 min_soc_pct=p.battery_min_soc, max_soc_pct=p.battery_max_soc),
+        )
+
+    def _optimizer(self, baseline: bool):
+        p = self.settings.physics
+        if baseline:
+            return BaselineCampusMicrogridOptimizer(battery_cap_kwh=p.battery_capacity_kwh, max_kw=p.battery_max_power_kw)
+        return CampusMicrogridOptimizer(battery_cap_kwh=p.battery_capacity_kwh, max_kw=p.battery_max_power_kw)
+
+    def _mark_auto(self, agent_key: str) -> None:
+        self.baseline_agents.add(agent_key)
+        self.slice_notes[agent_key] = "auto: member code not implemented yet"
+        logger.warning("%s member code is not implemented yet; running its reference baseline.", agent_key)
+
     def slice_status(self) -> Dict[str, str]:
         """Which implementation each agent slice is running — reported by /api/health."""
+        def status(key: str) -> str:
+            if key not in self.baseline_agents:
+                return "member_implementation"
+            return "reference_baseline_auto" if self.slice_notes.get(key, "").startswith("auto") else "reference_baseline"
         return {
-            "agent1_telemetry": "reference_baseline" if "agent1" in self.baseline_agents else "member_implementation",
-            "agent2_digital_twin": "reference_baseline" if "agent2" in self.baseline_agents else "member_implementation",
+            "agent1_telemetry": status("agent1"),
+            "agent2_digital_twin": status("agent2"),
             "agent3_policy_rag": "member_implementation",
-            "agent4_dispatch": "reference_baseline" if "agent4" in self.baseline_agents else "member_implementation",
+            "agent4_dispatch": status("agent4"),
         }
 
 

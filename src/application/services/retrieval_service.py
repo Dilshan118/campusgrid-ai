@@ -7,13 +7,16 @@ All retrieval components are injected by the DI container, so this service depen
 domain interfaces (VectorStore, EmbeddingProvider, KeywordSearchEngine, Reranker).
 """
 
+import copy
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from src.domain.interfaces.vector_store import VectorStore
 from src.domain.interfaces.embeddings import EmbeddingProvider
 from src.domain.interfaces.keyword_search import KeywordSearchEngine
 from src.domain.interfaces.reranker import Reranker
+from src.domain.interfaces.cache import CacheProvider
 from src.domain.entities.rag import DocumentClause
 
 logger = logging.getLogger("campusgrid.retrieval")
@@ -81,7 +84,9 @@ class RetrievalService:
         keyword_engine: KeywordSearchEngine,
         reranker: Reranker,
         ingestion_pipeline: Any,
-        corpus_dir: Optional[str] = None
+        corpus_dir: Optional[str] = None,
+        cache: Optional[CacheProvider] = None,
+        cache_ttl_seconds: int = 600,
     ):
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
@@ -89,6 +94,12 @@ class RetrievalService:
         self.reranker = reranker
         self.ingestion_pipeline = ingestion_pipeline
         self.corpus_dir = corpus_dir or "backend/rag/corpus/tariffs"
+        self.cache = cache
+        self.cache_ttl_seconds = cache_ttl_seconds
+        # Ingestion is serialised so concurrent uploads cannot both pass the duplicate check,
+        # and every change bumps the index version so cached search results are never stale.
+        self._ingest_lock = threading.Lock()
+        self._index_version = 0
         self._bootstrap_initial_corpus()
 
     @property
@@ -108,6 +119,11 @@ class RetrievalService:
         then (re-)ingested; clauses already indexed are skipped, so new files are picked up
         without duplicating old ones.
         """
+        with self._ingest_lock:
+            self._bootstrap_locked()
+            self._index_version += 1
+
+    def _bootstrap_locked(self):
         if self.vector_store.count() > 0:
             try:
                 self.keyword_engine.index_documents(self.vector_store.list_documents())
@@ -123,7 +139,18 @@ class RetrievalService:
             self.ingestion_pipeline.ingest_clauses([c.model_copy() for c in _FALLBACK_CLAUSES])
 
     def search(self, query: str, top_k: int = 2) -> Dict[str, Any]:
-        """Executes dense + sparse search, merges with RRF, and returns citations."""
+        """Executes dense + sparse search, merges with RRF, and returns citations (cached per index version)."""
+        cache_key = f"rag:v{self._index_version}:k{top_k}:{query.strip()}"
+        if self.cache is not None:
+            hit = self.cache.get(cache_key)
+            if hit is not None:
+                return copy.deepcopy(hit)
+        result = self._search_uncached(query, top_k)
+        if self.cache is not None:
+            self.cache.set(cache_key, copy.deepcopy(result), ttl_seconds=self.cache_ttl_seconds)
+        return result
+
+    def _search_uncached(self, query: str, top_k: int) -> Dict[str, Any]:
         # 1. Dense vector search (skipped when the embeddings carry no meaning)
         dense_candidates: List[DocumentClause] = []
         if self.dense_enabled:
@@ -175,14 +202,20 @@ class RetrievalService:
         effective_date: str = "2024-01-01"
     ) -> Dict[str, Any]:
         """Ingests a raw policy text or markdown snippet into the active vector and keyword stores."""
-        return self.ingestion_pipeline.ingest_raw_text(
-            text=text,
-            source_document=source_document,
-            effective_date=effective_date
-        )
+        with self._ingest_lock:
+            result = self.ingestion_pipeline.ingest_raw_text(
+                text=text,
+                source_document=source_document,
+                effective_date=effective_date
+            )
+            self._index_version += 1
+        return result
 
     def ingest_corpus_directory(self) -> Dict[str, Any]:
-        return self.ingestion_pipeline.ingest_directory(self.corpus_dir)
+        with self._ingest_lock:
+            result = self.ingestion_pipeline.ingest_directory(self.corpus_dir)
+            self._index_version += 1
+        return result
 
     def index_stats(self) -> Dict[str, Any]:
         docs = self.keyword_engine.documents

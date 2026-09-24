@@ -58,8 +58,8 @@ class AuditLogRepository(ABC):
         pass
 
     @abstractmethod
-    def list_recent(self, limit: int = 50) -> List[AuditRecord]:
-        """Newest first."""
+    def list_recent(self, limit: int = 50, record_type: Optional[str] = None) -> List[AuditRecord]:
+        """Newest first, optionally only one record type."""
         pass
 
     @abstractmethod
@@ -70,6 +70,15 @@ class AuditLogRepository(ABC):
     def get_decision_for(self, log_id: int) -> Optional[AuditRecord]:
         """Returns the approval_decision row whose parent_log_id is log_id, if one exists."""
         pass
+
+    def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        """Decision rows for many recommendations at once (avoids one query per row)."""
+        decisions = {}
+        for log_id in log_ids:
+            decision = self.get_decision_for(log_id)
+            if decision is not None:
+                decisions[log_id] = decision
+        return decisions
 
     @abstractmethod
     def list_all_ascending(self) -> List[AuditRecord]:
