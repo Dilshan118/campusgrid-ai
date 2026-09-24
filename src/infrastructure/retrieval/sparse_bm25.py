@@ -7,8 +7,9 @@ import math
 import re
 from typing import List, Dict, Any, Tuple
 from src.domain.entities.rag import DocumentClause
+from src.domain.interfaces.keyword_search import KeywordSearchEngine
 
-class BM25SearchEngine:
+class BM25SearchEngine(KeywordSearchEngine):
     """Okapi BM25 inverted index for exact keyword and clause reference matching."""
 
     def __init__(self, k1: float = 1.5, b: float = 0.75):
@@ -24,6 +25,14 @@ class BM25SearchEngine:
         # Lowercase and split on non-alphanumeric
         tokens = re.findall(r"\b[a-zA-Z0-9_\-\.]+\b", text.lower())
         return tokens
+
+    @property
+    def documents(self) -> List[DocumentClause]:
+        return list(self.corpus)
+
+    def add_documents(self, documents: List[DocumentClause]):
+        """Appends clauses; IDF and average length are recomputed over the whole corpus."""
+        self.index_documents(self.corpus + list(documents))
 
     def index_documents(self, documents: List[DocumentClause]):
         self.corpus = list(documents)
