@@ -12,9 +12,11 @@ from src.domain.interfaces.repositories import (
     TimetableRepository,
     MeterHistoryRepository,
     AuditLogRepository,
+    AnalyticsEventRepository,
 )
 from src.domain.interfaces.cache import CacheProvider
 from src.domain.interfaces.reranker import Reranker, RerankResult
+from src.domain.interfaces.keyword_search import KeywordSearchEngine
 from src.domain.interfaces.tool import Tool, ToolResult
 
 # 4 Specialized ML Agent Interfaces
@@ -40,9 +42,11 @@ __all__ = [
     "TimetableRepository",
     "MeterHistoryRepository",
     "AuditLogRepository",
+    "AnalyticsEventRepository",
     "CacheProvider",
     "Reranker",
     "RerankResult",
+    "KeywordSearchEngine",
     "Tool",
     "ToolResult",
     # 4 ML Domain Interfaces
