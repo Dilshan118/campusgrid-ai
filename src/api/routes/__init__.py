@@ -6,6 +6,7 @@ from src.api.routes.optimizer import router as optimizer_router
 from src.api.routes.rag import router as rag_router
 from src.api.routes.analytics import router as analytics_router
 from src.api.routes.audit import router as audit_router
+from src.api.routes.auth import router as auth_router
 
 __all__ = [
     "health_router",
@@ -16,4 +17,6 @@ __all__ = [
     "rag_router",
     "analytics_router",
     "audit_router",
+    "auth_router",
 ]
+
