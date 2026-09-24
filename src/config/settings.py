@@ -28,7 +28,7 @@ class LLMSettings(BaseModel):
     groq_api_key: Optional[str] = None
 
 class EmbeddingSettings(BaseModel):
-    provider: str = Field(default="mock", description="'sentence_transformers', 'mock'")
+    provider: str = Field(default="auto", description="'auto', 'sentence_transformers', 'mock'")
     model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     dimension: int = 384
 
@@ -104,7 +104,8 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
 
-    embedding_provider: str = "mock"
+    # 'auto' uses sentence-transformers when it is installed and its model loads, otherwise the mock.
+    embedding_provider: str = "auto"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dimension: int = 384
     rag_top_k: int = 2
@@ -139,6 +140,13 @@ class Settings(BaseSettings):
     use_reference_baselines: bool = Field(
         default=False,
         description="When True, container falls back to reference baseline algorithms for agents 1, 2, 4"
+    )
+    auto_baseline_fallback: bool = Field(
+        default=True,
+        description=(
+            "When a member slice still raises NotImplementedError, wire its reference baseline instead "
+            "and report it in /api/health, so a default install always runs end to end."
+        )
     )
     reference_baseline_agents: str = Field(
         default="",
@@ -182,8 +190,11 @@ class Settings(BaseSettings):
 
     @property
     def embeddings(self) -> EmbeddingSettings:
+        provider = self.embedding_provider
+        if provider == "auto" and self.app_env == "test":
+            provider = "mock"  # tests stay hermetic and fast unless they ask for a real model
         return EmbeddingSettings(
-            provider=self.embedding_provider,
+            provider=provider,
             model=self.embedding_model,
             dimension=self.embedding_dimension,
         )
