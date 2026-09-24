@@ -103,3 +103,18 @@ class ChromaStore(VectorStore):
     def count(self) -> int:
         col = self._get_collection()
         return col.count()
+
+    def list_documents(self) -> List[DocumentClause]:
+        col = self._get_collection()
+        res = col.get(include=["metadatas", "documents"])
+        docs = []
+        for doc_id, meta, content in zip(res.get("ids", []), res.get("metadatas", []), res.get("documents", [])):
+            docs.append(DocumentClause(
+                id=int(doc_id) if str(doc_id).isdigit() else None,
+                source_document=meta.get("source_document", "Unknown"),
+                clause_reference=meta.get("clause_reference", "Section"),
+                section_title=meta.get("section_title"),
+                content=content,
+                effective_date=meta.get("effective_date") or None,
+            ))
+        return docs
