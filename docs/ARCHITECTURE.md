@@ -5,7 +5,7 @@
 Everything about what we are building, how the system works, what technology goes where, what is
 built, what is missing, who does what, and the order we build it in.
 
-Written in plain English. Verified against the actual code on **7 September 2026**.
+Written in plain English. Verified against the actual code on **25 September 2026**.
 
 | I want to know… | Go to |
 |---|---|
@@ -149,8 +149,9 @@ strongest part of the system.
 It combines the forecast (Agent 1), the safety verdict (Agent 2) and the regulations (Agent 3),
 then solves a mathematical optimisation problem across 48 intervals to find the cheapest battery
 schedule that breaks no rules. Then a language model writes the plain-English justification, and
-**a second language model call checks every number in that justification against what the solver
-actually produced.**
+**every number in that justification is checked against what the solver produced and what the
+documents say; a second language model call audits the rest. If either check fails, the manager
+sees a warning.**
 
 **Hard boundary:** it recommends. A human approves before anything is actuated.
 
@@ -209,12 +210,14 @@ Every agent also has its own web address, so it can be called independently:
 | `POST /api/analytics/event` | — | usage tracking |
 | `GET /api/health` | — | which providers are active |
 
-### To external tools — MCP *(planned, Developer 2)*
+### To external tools — MCP
 
 **MCP (Model Context Protocol)** is a standard way for an AI system to call an external tool with
-a defined schema. The physics simulator will be exposed this way, so the tool boundary is real
-rather than just a Python function call. This is what lets us claim the protocol requirement
-honestly.
+a defined schema. The physics simulator and the campus weather tool are served as MCP tools at
+`POST /api/mcp` (JSON-RPC 2.0 over HTTP: `initialize`, `ping`, `tools/list`, `tools/call`), signed
+in and role-checked like every other planning route. Tool arguments are validated at the tool
+boundary, so an impossible command such as −15 °C is rejected. Inside the pipeline the agents still
+call each other in-process; MCP is the boundary for external and language-model tool clients.
 
 ---
 
@@ -227,7 +230,7 @@ A real request: *"Cut tomorrow's peak demand penalty and pre-cool Lecture Hall 1
         |
         v
   API receives it  ──  POST /api/orchestrator/query
-        |             (checks who you are — planned)
+        |             (checks who you are and what your role may do)
         v
   ORCHESTRATOR extracts the details
         room = LH-1 · target = 23.5C · date = tomorrow · goal = save money
@@ -275,13 +278,13 @@ A real request: *"Cut tomorrow's peak demand penalty and pre-cool Lecture Hall 1
 Two background jobs that run on a schedule, not during a request:
 
 ```
-  DOCUMENT INGESTION  (Team Lead — not built yet)
-  tariff PDFs → strip page furniture → split into clauses
-              → turn each clause into numbers → store in the database
+  DOCUMENT INGESTION  (Team Lead — built; runs at startup and on manager upload)
+  tariff Markdown/TXT/PDF → strip page furniture → split into clauses → screen for
+  injected instructions and implausible figures → turn each clause into numbers → store
 
-  MODEL RETRAINING  (Developer 1 — not built yet)
-  months of past readings → build features → train the forecasting model
-                          → save it → Agent 1 picks it up
+  MODEL RETRAINING  (Developer 1 — built; run by hand)
+  90 days of readings → build features → train the forecasting model
+                      → save model_forecaster.json → Agent 1 picks it up
 ```
 
 ---
@@ -297,17 +300,17 @@ Two background jobs that run on a schedule, not during a request:
 | Web server | FastAPI + Uvicorn | working |
 | Login & permissions | JWT tokens, 3 roles, per-route checks | working |
 | Understanding questions | rule-based entities + LLM intent router for unclear queries; spaCy NER planned | working |
-| Language model | LiteLLM → Gemini / OpenAI / Claude / Groq / Ollama | working |
+| Language model | LiteLLM → Gemini / OpenAI / Claude / Groq / Ollama (Python 3.11+) | working |
 | Turning text into numbers | sentence-transformers (`all-MiniLM-L6-v2`) | working (on in `.env.example`) |
-| Meaning-based search | pgvector inside PostgreSQL | built, untested live |
+| Meaning-based search | pgvector inside PostgreSQL | built, not yet verified against a live pgvector |
 | Keyword search | Okapi BM25, written by hand | working |
 | Combining search results | Reciprocal Rank Fusion | working |
-| Normal database | Neon PostgreSQL 16 | wired (all repositories) |
-| Maths solver | PuLP with the CBC engine | reference version only |
-| Building physics | 2R2C thermal model | reference version only |
-| Forecasting model | LightGBM or scikit-learn | **missing** |
-| Tool protocol | MCP | **missing** |
-| Testing | pytest — 142 tests | working |
+| Normal database | Neon PostgreSQL 16 | working — all repositories, seed rooms and timetable in `init.sql` |
+| Maths solver | PuLP with the CBC engine | working — Member 4's MILP with binary charge/discharge variables |
+| Building physics | 2R2C thermal model (SRS §6.1) | working — Member 3's model, calibrated c_in / r_vent |
+| Forecasting model | linear regression (LightGBM optional) | working — trained on a 90-day synthetic dataset |
+| Tool protocol | MCP (JSON-RPC 2.0 over HTTP) | working — `POST /api/mcp` |
+| Testing | pytest — 248 tests | working |
 
 ---
 
@@ -319,14 +322,16 @@ This is the section to read carefully. It answers "why is this here and what doe
 
 **What it is:** a model that understands and writes human language.
 
-**Where we use it — exactly two places today,** both in Agent 4:
-- `xai_explainer.py` — writes the plain-English justification
-- `faithfulness.py` — checks that justification for invented numbers
-
-**Where we should also use it (planned):**
-- The Orchestrator, to work out what the manager actually wants and which agents to run
-- Agent 1, to write a short "why is tomorrow unusual" summary
-- Agent 3, to rewrite a vague question into better search terms
+**Where we use it — four places today:**
+- The Orchestrator's intent router — only when the keyword rules are unsure, and it may only pick
+  one of five labels
+- Agent 1's `summary.py` — a two-sentence "why is tomorrow unusual" note
+- Agent 4's `xai_explainer.py` — writes the plain-English justification from the solver figures,
+  the retrieved tariff and Agent 2's comfort verdict (falls back to a solver-only text if the model
+  is down)
+- Agent 4's `faithfulness.py` — the second half of the fact check. The first half is deterministic:
+  every number in the explanation must appear in the solver output, the citations or the verified
+  context. An unreadable model verdict counts as a failure.
 
 **Why we do not fine-tune it.** Fine-tuning means retraining the model on your own data. We have
 almost no data, the task is explanation rather than specialist knowledge, and fine-tuning would
@@ -348,14 +353,12 @@ search by meaning rather than by exact words.
 consumption data never reaches the language model at all. That is a genuine privacy property and
 worth stating out loud in the report.
 
-> ### ⚠️ The most impactful single line in the whole project
+> ### ⚠️ Check which embeddings are live before any demo
 >
-> `EMBEDDING_PROVIDER` currently defaults to `mock`. The mock generates numbers from a hash of
-> the text — fast and repeatable, which is what automated tests want, but **carrying no meaning
-> at all.** Right now, meaning-based search returns effectively random results and only the
-> keyword search is doing real work.
->
-> Switch it to `sentence_transformers` before any demo, evaluation or screenshot.
+> `EMBEDDING_PROVIDER` defaults to `auto`: real sentence-transformers when installed, otherwise a
+> mock that generates numbers from a hash of the text — repeatable but **carrying no meaning.**
+> With the mock, meaning-based search is switched off and only keyword search runs.
+> `GET /api/health` → `dense_search_enabled` tells you which is live.
 
 ### Vector database
 
@@ -380,9 +383,9 @@ free.
 **What we use:** Neon PostgreSQL 16 — cloud-hosted, so all four of us connect to the same
 database with no local install.
 
-**Current state:** rooms and the audit log read from PostgreSQL. Meter history and timetables
-**silently fall back to a spreadsheet file** even when configured for PostgreSQL, because those
-two adapters have not been written yet. That is Developer 1's job.
+**Current state:** every repository has a PostgreSQL adapter. `init.sql` seeds the three rooms
+and the sample timetable. Meter history falls back to the 48-row seed day when a date has no
+rows, and the in-memory store returns that same seed day for every date.
 
 ### RAG (Retrieval-Augmented Generation)
 
@@ -414,9 +417,10 @@ retrieved, not from memory. That is what stops it inventing rates.
 We search both ways because each fails where the other succeeds. Meaning-based search is poor at
 exact codes like `GP-2 Section 4.2`; keyword search is poor at "ways to keep students cool".
 
-**Honest current state:** the machinery is real and working, but the searchable corpus is **four
-clauses typed directly into a Python file.** There is no ingestion pipeline yet. Until real tariff
-PDFs are loaded, this is a demonstration rather than a working knowledge base.
+**Honest current state:** the machinery is real and working, and an ingestion pipeline loads
+Markdown, text and PDF documents. The corpus is still small: **seven clauses** in
+`backend/rag/corpus/tariffs`, written to mirror the PUCSL GP-2 schedule and ASHRAE-55. Loading the
+official documents is what turns this from a demonstration into a real knowledge base.
 
 ### Machine learning models
 
@@ -489,15 +493,15 @@ titled `WIRE: <my class> into container`.
 
 | Setting in `.env` | Options | Wired up? |
 |---|---|---|
-| `LLM_PROVIDER` | mock · gemini · openai · anthropic · groq · ollama | ✅ yes |
-| `EMBEDDING_PROVIDER` | mock · sentence_transformers | ✅ yes (`.env.example` uses real embeddings; mock disables the dense leg) |
-| `VECTOR_STORE_PROVIDER` | memory · pgvector · chroma | ✅ yes |
+| `LLM_PROVIDER` | mock · litellm · gemini · openai · anthropic · groq · ollama | ✅ yes — a vendor name must match `LLM_MODEL`'s prefix, or startup stops |
+| `EMBEDDING_PROVIDER` | auto · mock · sentence_transformers | ✅ yes (`.env.example` uses real embeddings; mock disables the dense leg) |
+| `VECTOR_STORE_PROVIDER` | memory · pgvector · chroma | ✅ yes — `pgvector` needs `DATABASE_PROVIDER=postgres`; anything else stops startup |
 | `DATABASE_PROVIDER` | in_memory · postgres | ✅ yes — all five repositories, incl. analytics |
-| `CACHE_PROVIDER` | memory · redis | 🔶 memory only, and nothing uses the cache |
+| `CACHE_PROVIDER` | memory | ✅ memory only (caches search results); `redis` stops startup |
 | `RERANKER_STRATEGY` | rrf · passthrough | ✅ yes — `cross_encoder` stops startup with a clear error |
 | `WEATHER_PROVIDER` | open-meteo | ✅ validated — anything else stops startup |
 | `USE_REFERENCE_BASELINES` | true · false | ✅ yes — this is the "nobody is blocked" switch |
-| `REFERENCE_BASELINE_AGENTS` | any of agent1, agent2, agent4 | ✅ yes — baseline only the unfinished slices |
+| `REFERENCE_BASELINE_AGENTS` | any of agent1, agent2, agent4 | ✅ yes — empty by default: all three member slices are finished |
 
 ### The stand-in system — why nobody waits
 
@@ -528,25 +532,23 @@ your own code in the viva.
 - Swappable language model across 5 vendors plus an offline fake
 - Append-only audit log
 - Working stand-ins for all three developers' work
-- 142 tests: **136 pass, 5 skip, 1 intentional fail.** The skips are Agent 2's unwritten physics; the
-  failure is TC-S2-01, a guard Member 2 wrote to fail once the Lead fixed their finding (see
-  `docs/TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md`).
+- 248 tests, all passing (25 September 2026).
 
 ### Missing
 
 | What | Owner | Why it matters |
 |---|---|---|
-| Demand forecaster | Developer 1 | Agent 1 does nothing without it |
-| Real weather data | Developer 1 | Returns identical numbers every day |
-| PostgreSQL meter + timetable adapters | Developer 1 | Agent 1 never reads the real database |
-| Trained forecasting model + real dataset | Developer 1 | No result to report or defend |
-| Room temperature physics | Developer 2 | Agent 2 does nothing without it |
-| Battery charge physics | Developer 2 | Safety limits unverified |
-| Fitted physics constants | Developer 2 | Currently guessed |
-| MCP tool exposure | Developer 2 | Required protocol, currently just a function |
-| The solver | Developer 3 | Agent 4 does nothing without it |
-| Integer variables in the solver | Developer 3 | Without them it is not truly a MILP |
-| Fairness tier rules | Developer 3 | Required Responsible AI element |
+| ~~Demand forecaster~~ | Developer 1 | **Done** — trained linear model, inputs held inside the training range |
+| ~~Real weather data~~ | Developer 1 | **Done** — Open-Meteo per date (fixed 25 Sept: dated requests had always fallen back offline) |
+| ~~PostgreSQL meter + timetable adapters~~ | Developer 1 | **Done** |
+| Trained forecasting model + real dataset | Developer 1 | Model done; the dataset is synthetic (documented) |
+| ~~Room temperature physics~~ | Developer 2 | **Done** — 2R2C with a wall node, per SRS §6.1 |
+| ~~Battery charge physics~~ | Developer 2 | **Done** |
+| ~~Fitted physics constants~~ | Developer 2 | **Done** — c_in and r_vent fitted; wall constants are defaults |
+| ~~MCP tool exposure~~ | Developer 2 | **Done** — `POST /api/mcp` |
+| ~~The solver~~ | Developer 3 | **Done** |
+| ~~Integer variables in the solver~~ | Developer 3 | **Done** |
+| Fairness tier rules | Developer 3 | Classification done; enforcement waits for decisions D-1 to D-3 |
 | ~~Login and permissions~~ | Team Lead | **Done** — JWT, 3 roles, lockout, logout |
 | ~~Document ingestion~~ | Team Lead | **Done** — Markdown/TXT/PDF, screening, de-duplication |
 | Entity extraction + smart routing | Team Lead | **Done** except spaCy (rule entities + LLM router) |
@@ -560,10 +562,10 @@ your own code in the viva.
 
 Found by reading the code. Ordered by how much they matter.
 
-> **Status on 24 September 2026:** #3, #4 and #5 are fixed (Team Lead). #1, #6, #7 and #9 are still
-> open and belong to their owners. #2 is done for Students 1 and 2. The current, complete list of open
-> items per member and the cross-member integration issues is in
-> [`TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md`](TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md).
+> **Status on 25 September 2026:** #1, #3, #4, #5, #6, #7 and #9 are fixed. #8's dead code is
+> removed (the tool registry is now used by the MCP endpoint). #2 is done for Students 1, 2 and 4;
+> Student 3 has 2 of 15 cases. The current list of open items is in
+> [`TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md`](TEAM_LEAD_REVIEW_AND_INTEGRATION_REPORT.md) (section 0).
 
 ### Serious
 
@@ -892,17 +894,17 @@ The assignment asks for specific things. Here is where we stand:
 |---|---|
 | At least 2 interacting agents | ✅ we have 4 |
 | One or more language models | ✅ working |
-| NLP techniques (entity extraction, summarising) | ⬜ Team Lead + Developer 1 |
+| NLP techniques (entity extraction, summarising) | ✅ rule-based entities + LLM summary (spaCy not used) |
 | An information retrieval module | ✅ our strongest part |
-| Security (login, input checking) | ⬜ Team Lead |
-| Defined communication protocols | 🔶 web endpoints done, MCP is Developer 2 |
-| Fairness | ⬜ Developer 3 |
-| Explainability and transparency | ✅ working |
-| Protecting user data | 🔶 meter data never reaches the language model — Developer 1 adds the rest |
+| Security (login, input checking) | ✅ JWT, roles, sanitization, lockout |
+| Defined communication protocols | ✅ REST per agent + MCP at `/api/mcp` |
+| Fairness | 🔶 tier classification only; enforcement pending D-1 to D-3 |
+| Explainability and transparency | ✅ working, with a two-part fact check |
+| Protecting user data | ✅ meter data never reaches the language model; exports carry per-date Laplace noise |
 | A commercialisation plan | ✅ written |
 | A clean repository with a good README | ✅ done |
 
-Three gaps and two half-finished items. That is a to-do list, not a problem.
+One half-finished item (fairness enforcement). That is a to-do list, not a problem.
 
 ### The sentence to build the video and viva around
 
@@ -925,13 +927,13 @@ Three gaps and two half-finished items. That is a to-do list, not a problem.
 ```bash
 git clone <repo>
 cd "IRWA project"
-python3 -m venv venv && source venv/bin/activate
+python3.11 -m venv venv && source venv/bin/activate
 pip install -e ".[all]"
 cp .env.example .env
-pytest tests/ -v          # 136 passed, 5 skipped (Agent 2 physics), 1 known fail (TC-S2-01)
+pytest tests/ -v          # 248 passed (Python 3.11+)
 ```
 
-If those 37 tests do not pass, stop and tell the Team Lead. Do not start working.
+If the tests do not all pass, stop and tell the Team Lead. Do not start working.
 
 ### Every day
 
@@ -974,5 +976,5 @@ If "what files I changed" lists a file you do not own, say so straight away.
 
 ---
 
-*Verified against the codebase on 7 September 2026. If you change how the system works, update
+*Verified against the codebase on 25 September 2026. If you change how the system works, update
 this document in the same commit.*

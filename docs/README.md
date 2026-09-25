@@ -29,9 +29,10 @@ These documents serve different purposes. Read the one you need.
 
 ## Accuracy note
 
-These documents were written before the `src/` Clean Architecture refactor and have been
-corrected against the codebase as of **7 September 2026**. Things that were described but never
-built have been either removed or explicitly marked **(planned)**.
+These documents were written before the `src/` Clean Architecture refactor. `ARCHITECTURE.md`,
+the Team Lead report and `README.md` were corrected against the codebase on **25 September 2026**;
+the two SRS documents are kept as submitted. Things that were described but never built have been
+either removed or explicitly marked **(planned)**.
 
 Two design decisions are recorded rather than silently dropped, because you will be asked about
 them:
