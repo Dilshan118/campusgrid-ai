@@ -15,6 +15,7 @@ Two prediction paths:
   NotImplementedError and the system keeps working before training has happened.
 """
 
+import os
 from typing import List, Dict, Any, Optional
 from statistics import pstdev
 
@@ -26,7 +27,8 @@ from src.agents.telemetry.model_utils import (
     load_model_artifact,
 )
 
-DEFAULT_MODEL_PATH = "src/agents/telemetry/model_forecaster.json"
+# Next to this file, so the trained model is found whatever directory the server starts from.
+DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_forecaster.json")
 
 # Absolute safety ceiling: any predicted interval above this is always flagged,
 # regardless of how the rest of the day looks (mirrors the 100 kW site rate limit
@@ -103,8 +105,17 @@ class DemandForecaster(DemandForecasterInterface):
             model_version=model_version
         )
 
+    def _clip_to_training_range(self, temp: float, occ: float):
+        """A linear model extrapolates without limit: occupancy of 1,650 against a training range of
+        0-534 predicted ~2.6x the historical peak. Inputs are held inside the range the model saw."""
+        ranges = (self._model_artifact or {}).get("feature_ranges") or {}
+        t_low, t_high = ranges.get("outdoor_temp_c", (temp, temp))
+        o_low, o_high = ranges.get("occupancy_count", (occ, occ))
+        return min(max(temp, t_low), t_high), min(max(occ, o_low), o_high)
+
     def _predict_demand(self, time_slot: str, temp: float, occ: float, fallback_base_kw: float) -> float:
         if self._model_artifact and self._model_artifact.get("model_type") == "linear_regression":
+            temp, occ = self._clip_to_training_range(temp, occ)
             feature_vector = build_feature_vector(time_slot, temp, occ)
             return max(
                 0.0,

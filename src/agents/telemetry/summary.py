@@ -58,11 +58,13 @@ def build_forecast_summary(
     avg_kw = sum(forecast_demand_kw) / len(forecast_demand_kw)
     max_temp_c = max(temperature_series_c) if temperature_series_c else None
     anomaly_count = len(anomaly_indices)
+    # Formatting None with :.1f raised TypeError here, outside the try below, failing all of Agent 1.
+    temp_fact = f"Peak outdoor temperature: {max_temp_c:.1f} C. " if max_temp_c is not None else ""
 
     facts = (
         f"Average forecast demand: {avg_kw:.1f} kW. "
         f"Peak forecast demand: {peak_kw:.1f} kW at {peak_slot}. "
-        f"Peak outdoor temperature: {max_temp_c:.1f} C. "
+        f"{temp_fact}"
         f"Number of anomalous (unusually high) intervals flagged: {anomaly_count}."
     )
 
