@@ -21,6 +21,28 @@ CREATE TABLE IF NOT EXISTS timetables (
     expected_students INT NOT NULL
 );
 
+-- Seed inventory, identical to the in-memory repositories. Without rooms, Postgres mode knows no
+-- room capacity, so a campus-wide headcount could be simulated inside a single lecture hall.
+-- Safe to re-run: existing rows are left alone.
+INSERT INTO rooms (room_id, building_name, room_type, max_capacity, chiller_zone_id) VALUES
+    ('LH-1', 'Main Academic Complex', 'Lecture Hall', 250, 'ZONE-A1'),
+    ('AUD-1', 'Auditorium Wing', 'Auditorium', 600, 'ZONE-B1'),
+    ('LAB-3', 'Computing Building', 'Computer Lab', 80, 'ZONE-C2')
+ON CONFLICT (room_id) DO NOTHING;
+
+-- day_of_week: 1 = Monday ... 7 = Sunday (ISO weekday, as Agent 1 derives it from the date).
+INSERT INTO timetables (room_id, course_code, day_of_week, start_time, end_time, expected_students)
+SELECT v.room_id, v.course_code, v.day_of_week, v.start_time::time, v.end_time::time, v.expected_students
+FROM (VALUES
+    ('LH-1', 'IT3041', 1, '08:30', '11:30', 220),
+    ('LH-1', 'IT3020', 1, '13:00', '16:00', 240),
+    ('AUD-1', 'EN1010', 1, '09:00', '12:00', 550)
+) AS v(room_id, course_code, day_of_week, start_time, end_time, expected_students)
+WHERE NOT EXISTS (
+    SELECT 1 FROM timetables t
+    WHERE t.room_id = v.room_id AND t.course_code = v.course_code AND t.day_of_week = v.day_of_week
+);
+
 -- Column names and types mirror src/domain/entities/telemetry.py :: TelemetryInterval
 -- exactly, so MeterHistoryRepository can round-trip the entity without translation.
 -- (reading_date, time_slot) is the natural key that get_historical_profile() queries by.
