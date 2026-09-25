@@ -74,7 +74,6 @@ class PolicyRAGAgent(BaseAgent):
             "citations": citations_list,
             "constraint_citations": constraint_citations,
             "all_citations": all_citations,
-            "matched_passages": retrieval_result.get("passages", []),
             "extracted_rules": rules,
             "peak_tariff_lkr": rules["rates_lkr_kwh"]["peak"],
             "day_tariff_lkr": rules["rates_lkr_kwh"]["day"],

@@ -21,6 +21,10 @@ from src.domain.entities.rag import DocumentClause
 
 logger = logging.getLogger("campusgrid.retrieval")
 
+# Resolved from this file, not the working directory: started from anywhere else, a relative
+# path silently shrank the knowledge base to the four fallback clauses below.
+DEFAULT_CORPUS_DIR = str(Path(__file__).resolve().parents[3] / "backend" / "rag" / "corpus" / "tariffs")
+
 # Last-resort seed used only when the corpus directory yields no clauses at all.
 _FALLBACK_CLAUSES = [
     DocumentClause(
@@ -106,7 +110,7 @@ class RetrievalService:
         self.keyword_engine = keyword_engine
         self.reranker = reranker
         self.ingestion_pipeline = ingestion_pipeline
-        self.corpus_dir = corpus_dir or "backend/rag/corpus/tariffs"
+        self.corpus_dir = corpus_dir or DEFAULT_CORPUS_DIR
         self.cache = cache
         self.cache_ttl_seconds = cache_ttl_seconds
         # Ingestion is serialised so concurrent uploads cannot both pass the duplicate check,
