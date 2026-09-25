@@ -14,7 +14,7 @@ Each intent runs only the agents it needs:
 
 import contextvars
 import uuid
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
 from src.agents.coordinator.nlp_parser import (
@@ -88,6 +88,7 @@ class CampusGridOrchestrator(BaseAgent):
         comfort_max_c: float = COMFORT_TEMP_MAX_C,
         battery_limits: Optional[Dict[str, float]] = None,
         parallel_agents: bool = True,
+        agent3_timeout_seconds: float = 60.0,
     ):
         super().__init__(
             name="Central Orchestrator",
@@ -105,6 +106,7 @@ class CampusGridOrchestrator(BaseAgent):
         self.comfort_max_c = comfort_max_c
         self.battery_limits = battery_limits or {}
         self.parallel_agents = parallel_agents
+        self.agent3_timeout_seconds = agent3_timeout_seconds
 
     # ------------------------------------------------------------------
 
@@ -249,7 +251,7 @@ class CampusGridOrchestrator(BaseAgent):
             {"agent1_telemetry": a1_res.model_dump(), "agent2_digital_twin": a2_res.model_dump()},
             decision,
         )
-        verdict = "comfort maintained" if feasible else f"{violations} interval(s) outside the comfort band"
+        verdict = "comfort maintained" if feasible else self._comfort_problem(violations)
         return self._response(
             ctx, log_id,
             status="simulation_completed",
@@ -270,7 +272,17 @@ class CampusGridOrchestrator(BaseAgent):
 
     def _handle_dispatch(self, ctx: Dict[str, Any], a1_res, a2_res, a3_future: Optional[Future] = None) -> Dict[str, Any]:
         parsed = ctx["parsed"]
-        a3_res = a3_future.result() if a3_future is not None else self.agent3.execute(self._agent3_dispatch_input(ctx["query"]))
+        if a3_future is not None:
+            try:
+                a3_res = a3_future.result(timeout=self.agent3_timeout_seconds)
+            except FutureTimeoutError:
+                # The worker thread cannot be cancelled; it finishes in the background and is discarded.
+                raise AgentPipelineError(
+                    "Agent 3 (Policy & Information Retrieval)",
+                    f"no answer within {self.agent3_timeout_seconds:g} seconds",
+                )
+        else:
+            a3_res = self.agent3.execute(self._agent3_dispatch_input(ctx["query"]))
         if not a3_res.success:
             raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
@@ -287,6 +299,15 @@ class CampusGridOrchestrator(BaseAgent):
         )
         citations = a3_res.data.get("all_citations", a3_res.data.get("citations", []))
         thermal_feasible, comfort_violations = self._thermal_verdict(a2_res.data)
+        tariff_summary = {
+            "rates_lkr_kwh": {
+                "peak": rates.get("peak", a3_res.data.get("peak_tariff_lkr", 58.0)),
+                "day": rates.get("day", a3_res.data.get("day_tariff_lkr", 30.0)),
+                "off_peak": rates.get("off_peak", a3_res.data.get("off_peak_tariff_lkr", 15.0)),
+            },
+            "windows": rules.get("windows"),
+            "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
+        }
 
         a4_res = self.agent4.execute({
             "time_slots": time_slots,
@@ -297,6 +318,7 @@ class CampusGridOrchestrator(BaseAgent):
             "user_query": ctx["query"],
             "feasibility_verdict": thermal_feasible,
             "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
+            "tariff_summary": tariff_summary,
             **ctx["battery_parameters"],
         })
         if not a4_res.success:
@@ -317,6 +339,7 @@ class CampusGridOrchestrator(BaseAgent):
             "savings_percentage": a4_res.data.get("savings_percentage"),
             "peak_shaved_kw": a4_res.data.get("peak_shaved_kw"),
             "explanation": a4_res.data.get("explanation"),
+            "explanation_source": a4_res.data.get("explanation_source"),
             "faithfulness_audit": a4_res.data.get("faithfulness_audit"),
             "tariff_inputs": tariff_inputs,
             "thermal_feasibility": {
@@ -336,7 +359,7 @@ class CampusGridOrchestrator(BaseAgent):
         # Stored with the plan so a reviewer can render it from the audit record alone.
         final_decision["explanation_concise"] = self._concise_explanation(final_decision["solver_summary"])
         final_decision["citations"] = citations
-        final_decision["battery_limits"] = self.battery_limits
+        final_decision["battery_limits"] = self._battery_limits_used(a4_res.data.get("battery_parameters"))
         final_decision["assumptions"] = list(parsed.get("notes", []))
         demand = a1_res.data.get("forecast_demand_kw", [])
         solar = a1_res.data.get("forecast_solar_kw", [])
@@ -390,12 +413,28 @@ class CampusGridOrchestrator(BaseAgent):
         if input_data.get("date"):
             parsed["date"], parsed["date_explicit"] = input_data["date"], True
 
+    def _battery_limits_used(self, params: Optional[Dict[str, float]]) -> Dict[str, float]:
+        """The battery limits the plan was actually solved with (settings, or the dispatch form's values)."""
+        if not params:
+            return self.battery_limits
+        capacity = float(params["battery_capacity_kwh"])
+        return {
+            "capacity_kwh": capacity,
+            "min_soc_kwh": round(capacity * float(params["min_soc_ratio"]), 2),
+            "max_soc_kwh": round(capacity * float(params["max_soc_ratio"]), 2),
+            "max_power_kw": max(float(params["max_charge_rate_kw"]), float(params["max_discharge_rate_kw"])),
+            "max_charge_kw": float(params["max_charge_rate_kw"]),
+            "max_discharge_kw": float(params["max_discharge_rate_kw"]),
+        }
+
     @staticmethod
     def _concise_explanation(solver: Dict[str, Any]) -> Optional[str]:
         """One-line summary built only from solver numbers (variant A of the XAI A/B test)."""
         try:
+            savings = float(solver["net_savings_lkr"])
+            outcome = f"saves LKR {savings:,.0f}" if savings >= 0 else f"costs LKR {abs(savings):,.0f} more"
             return (
-                f"Plan saves LKR {float(solver['net_savings_lkr']):,.0f} "
+                f"Plan {outcome} "
                 f"({float(solver['savings_percentage']):.1f}%) and lowers the peak from "
                 f"{float(solver['peak_demand_baseline_kw']):.0f} kW to {float(solver['peak_demand_optimized_kw']):.0f} kW."
             )
@@ -410,16 +449,25 @@ class CampusGridOrchestrator(BaseAgent):
     @staticmethod
     def _thermal_verdict(twin_data: Dict[str, Any]):
         # Agent 2 reports "is_thermal_feasible"; "is_feasible" is the simulation tool's key.
-        feasible = twin_data.get("is_thermal_feasible", twin_data.get("is_feasible", True))
+        # A missing verdict fails closed: an unverified plan is never reported as comfortable.
+        feasible = twin_data.get("is_thermal_feasible", twin_data.get("is_feasible"))
         return bool(feasible), int(twin_data.get("comfort_violations_count", twin_data.get("comfort_violation_count", 0)) or 0)
+
+    @staticmethod
+    def _comfort_problem(violations: int) -> str:
+        if violations:
+            return f"{violations} interval(s) outside the comfort band"
+        return "the digital twin did not confirm the comfort band"
 
     @staticmethod
     def _dispatch_warnings(parsed, rules, thermal_feasible, comfort_violations, a4_data) -> List[str]:
         warnings: List[str] = []
-        if not thermal_feasible:
+        if not thermal_feasible and comfort_violations:
             warnings.append(
                 f"Digital twin predicts {comfort_violations} interval(s) outside the ASHRAE-55 comfort band."
             )
+        elif not thermal_feasible:
+            warnings.append("The digital twin did not confirm the ASHRAE-55 comfort band; comfort is unverified.")
         audit = a4_data.get("faithfulness_audit") or {}
         if audit.get("is_faithful") is False:
             claims = audit.get("hallucinated_claims") or []
