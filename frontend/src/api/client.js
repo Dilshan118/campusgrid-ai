@@ -82,7 +82,9 @@ export const api = {
 
   // Audit & approvals
   auditLogs: (params) => request('GET', '/api/audit/logs', { query: params }),
-  auditRecord: (id) => request('GET', `/api/audit/logs/${encodeURIComponent(id)}`),
+  // includeDetails=false skips every agent's full output (the plan review page needs only the decision).
+  auditRecord: (id, { includeDetails = true } = {}) =>
+    request('GET', `/api/audit/logs/${encodeURIComponent(id)}`, { query: { include_details: includeDetails } }),
   pending: (limit = 100) => request('GET', '/api/audit/pending', { query: { limit } }),
   decide: (payload) => request('POST', '/api/audit/approve', { body: payload }),
   verifyAudit: () => request('GET', '/api/audit/verify'),
