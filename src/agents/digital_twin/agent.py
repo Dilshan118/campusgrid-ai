@@ -4,13 +4,18 @@ Executes 2R2C building thermal physics, evaluates ASHRAE-55 comfort, and validat
 Runs what-if environmental and crowd perturbation simulations.
 """
 
+import math
 from typing import Dict, Any, List, Optional
 from src.agents.base.agent import BaseAgent
 from src.agents.digital_twin.thermal_model import BuildingThermalTwin
 from src.domain.interfaces.tool import Tool
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
 from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
-from src.config.settings import get_settings
+from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C, BATTERY_CAPACITY_DEFAULT_KWH
+
+# Rated cooling one zone can draw when a setpoint is controlled (kW thermal). Settings override it.
+DEFAULT_HVAC_MAX_COOLING_KW = 35.0
+_THERMOSTAT_BISECTION_STEPS = 20
 
 class DigitalTwinAgent(BaseAgent):
     """Agent 2: Cyber-physical simulator validating feasibility and what-if scenarios."""
@@ -19,7 +24,11 @@ class DigitalTwinAgent(BaseAgent):
         self,
         simulation_tool: Optional[Tool] = None,
         thermal_twin: Optional[BuildingThermalTwinInterface] = None,
-        battery_dynamics: Optional[BatteryDynamicsInterface] = None
+        battery_dynamics: Optional[BatteryDynamicsInterface] = None,
+        comfort_min_c: float = COMFORT_TEMP_MIN_C,
+        comfort_max_c: float = COMFORT_TEMP_MAX_C,
+        battery_capacity_kwh: float = BATTERY_CAPACITY_DEFAULT_KWH,
+        hvac_max_cooling_kw: float = DEFAULT_HVAC_MAX_COOLING_KW,
     ):
         super().__init__(
             name="Agent 2: Digital Twin Simulation",
@@ -28,6 +37,11 @@ class DigitalTwinAgent(BaseAgent):
         self.simulation_tool = simulation_tool
         self.thermal_twin = thermal_twin or BuildingThermalTwin()
         self.battery_dynamics = battery_dynamics or BatteryDynamicsModel()
+        # Defaults come from the container (settings); a caller may override them per request.
+        self.comfort_min_c = comfort_min_c
+        self.comfort_max_c = comfort_max_c
+        self.battery_capacity_kwh = battery_capacity_kwh
+        self.hvac_max_cooling_kw = hvac_max_cooling_kw
 
     def _run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         initial_temp = float(input_data.get("initial_temp_c", 24.0))
@@ -44,14 +58,25 @@ class DigitalTwinAgent(BaseAgent):
 
         perturbed_ambients = [round(t + temp_delta, 2) for t in ambient_temps]
         perturbed_occupants = [int(o * occ_multiplier) for o in occupants]
+        setpoint = input_data.get("target_setpoint_c")
 
-        # If HVAC proposal not supplied, create standard baseline cooling curve
-        if not hvac_proposal:
+        if hvac_proposal:
+            hvac_mode = "supplied"
+            hvac_proposal = [round(p * solar_scaling_factor, 2) for p in hvac_proposal]
+        elif setpoint is not None:
+            # Thermostat: cool towards the requested setpoint, within the (derated) plant capacity.
+            hvac_mode = "thermostat"
+            hvac_proposal = self._thermostat_schedule(
+                initial_temp, perturbed_ambients, perturbed_occupants, float(setpoint),
+                self.hvac_max_cooling_kw * solar_scaling_factor,
+            )
+        else:
+            # No plan and no setpoint: standard office-hours cooling curve.
+            hvac_mode = "default_schedule"
             hvac_proposal = [
-                35.0 if (8 <= (i // 2) <= 17) else 5.0
+                round((35.0 if (8 <= (i // 2) <= 17) else 5.0) * solar_scaling_factor, 2)
                 for i in range(len(perturbed_ambients))
             ]
-        hvac_proposal = [round(p * solar_scaling_factor, 2) for p in hvac_proposal]
 
         # Run 2R2C continuous thermal model
         indoor_temps = self.thermal_twin.simulate(
@@ -61,8 +86,8 @@ class DigitalTwinAgent(BaseAgent):
             hvac_power_kw=hvac_proposal
         )
 
-        comfort_min = get_settings().physics.comfort_min_temp_c
-        comfort_max = get_settings().physics.comfort_max_temp_c
+        comfort_min = float(input_data.get("comfort_min_c", self.comfort_min_c))
+        comfort_max = float(input_data.get("comfort_max_c", self.comfort_max_c))
         comfort_violations = 0
         max_deviation_c = 0.0
         for t in indoor_temps:
@@ -75,7 +100,7 @@ class DigitalTwinAgent(BaseAgent):
         # the existing what-if API route) do not supply a charge/discharge plan — default
         # to an idle battery (no activity) so the SOC trajectory is still returned, flat
         # and violation-free, rather than silently skipped.
-        battery_capacity_kwh = get_settings().physics.battery_capacity_kwh
+        battery_capacity_kwh = self.battery_capacity_kwh
         battery_initial_soc_kwh = float(
             input_data.get("battery_initial_soc_kwh", battery_capacity_kwh * 0.5)
         )
@@ -95,6 +120,8 @@ class DigitalTwinAgent(BaseAgent):
             "ambient_temperatures_c": perturbed_ambients,
             "occupancy_counts": perturbed_occupants,
             "hvac_power_kw": hvac_proposal,
+            "hvac_mode": hvac_mode,
+            "target_setpoint_c": setpoint,
             "comfort_violations_count": comfort_violations,
             "is_thermal_feasible": is_feasible,
             "max_temp_deviation_c": round(max_deviation_c, 2),
@@ -108,6 +135,46 @@ class DigitalTwinAgent(BaseAgent):
                 "solar_scaling_factor": solar_scaling_factor
             }
         }
+
+    def _thermostat_schedule(
+        self,
+        initial_temp: float,
+        ambients: List[float],
+        occupants: List[int],
+        setpoint: float,
+        max_cooling_kw: float,
+    ) -> List[float]:
+        """Per interval, the least cooling that keeps the room at or below the setpoint.
+
+        Found by bisection on the injected twin (member or baseline), re-simulating the whole
+        prefix each time so any hidden state (e.g. the 2R2C wall temperature) carries over.
+        Where even full capacity cannot hold the setpoint, the plant runs flat out.
+        """
+        schedule: List[float] = []
+        for t in range(len(ambients)):
+            def end_temp(q_kw: float) -> float:
+                return self.thermal_twin.simulate(
+                    initial_temp_c=initial_temp,
+                    ambient_temps=ambients[: t + 1],
+                    occupant_counts=occupants[: t + 1],
+                    hvac_power_kw=schedule + [q_kw],
+                )[-1]
+
+            if end_temp(0.0) <= setpoint:
+                schedule.append(0.0)
+                continue
+            if end_temp(max_cooling_kw) > setpoint:
+                schedule.append(round(max_cooling_kw, 2))
+                continue
+            low, high = 0.0, max_cooling_kw
+            for _ in range(_THERMOSTAT_BISECTION_STEPS):
+                mid = (low + high) / 2.0
+                if end_temp(mid) > setpoint:
+                    low = mid
+                else:
+                    high = mid
+            schedule.append(math.ceil(high * 100.0) / 100.0)  # round up: never less cooling than needed
+        return schedule
 
     def run_what_if_scenarios(
         self,

@@ -4,6 +4,7 @@ Module Owner: Member 3 (Digital Twin, Cyber-Physical Physics & Simulation)
 
 The 2R2C model in `thermal_model.py` ships with GUESSED constants (c_in=50.0 kWh/°C,
 r_vent=2.5 °C/kW). This module fits both constants against measured indoor temperatures
+(the wall constants c_wall, r_in and r_out are held at their defaults during the fit)
 using `scipy.optimize.least_squares`, and reports how much more accurate the fitted
 model is than the guessed one — this is Developer 2's headline result.
 

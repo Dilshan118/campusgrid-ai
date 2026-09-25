@@ -14,12 +14,11 @@ Implements the two methods an MCP client actually calls on a tool server:
   - "tools/call": tool invocation, returning MCP's CallToolResult content/isError shape
 
 `handle_request()` is deliberately transport-agnostic: it takes and returns plain
-JSON-RPC dicts, so it can be driven directly (as the tests do) or wired to a stdio/SSE
-transport via the official `mcp` SDK. Adding that SDK as a dependency needs a line in
-`pyproject.toml`, which is team-lead-owned (see TEAM_GUIDES/OWNERSHIP.md) — filed as a
-`WIRE: mcp SDK transport` request rather than edited here. The protocol-level logic
+JSON-RPC dicts, so it can be driven directly (as the tests do) or by a transport. The API
+serves it over HTTP at `POST /api/mcp` (JSON-RPC in the request body, authenticated like
+every other route), with the container's registered tools. The protocol-level logic
 below (method dispatch, tool discovery, argument validation, error shapes) is identical
-regardless of which transport eventually carries these JSON-RPC messages.
+regardless of which transport carries these JSON-RPC messages.
 """
 
 import json
@@ -57,8 +56,8 @@ class MCPToolServer:
     def _error(request_id: Any, code: int, message: str) -> Dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
-    def handle_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """Dispatches one JSON-RPC 2.0 request to the matching MCP method.
+    def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Dispatches one JSON-RPC 2.0 request to the matching MCP method (None for a notification).
 
         Malformed envelopes, unknown methods, unknown tools, and invalid tool
         arguments are all rejected with a JSON-RPC error object rather than raising —
@@ -72,6 +71,14 @@ class MCPToolServer:
         request_id = request.get("id")
         method = request["method"]
         params = request.get("params", {}) or {}
+
+        # Notifications (e.g. "notifications/initialized", sent by every client after initialize)
+        # carry no id and must not be answered (JSON-RPC 2.0 section 4.1).
+        if str(method).startswith("notifications/"):
+            return None
+
+        if method == "ping":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {}}
 
         if method == "initialize":
             return {
