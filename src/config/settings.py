@@ -14,14 +14,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # The JWT secret shipped in .env.example. Accepted for local development only.
 DEFAULT_JWT_SECRET = "campusgrid_super_secret_jwt_key_replace_in_production_32b"
 
+# Gemini 1.5 models are retired and no longer in LiteLLM's model catalogue.
+DEFAULT_LLM_MODEL = "gemini/gemini-3.5-flash"
+
 # Slices that can be swapped for their reference baseline (see REFERENCE_BASELINE_AGENTS).
 BASELINE_AGENT_KEYS = {"agent1", "agent2", "agent4"}
 
 class LLMSettings(BaseModel):
     provider: str = Field(default="mock", description="'litellm', 'openai', 'gemini', 'anthropic', 'groq', 'ollama', 'mock'")
-    model: str = Field(default="gemini/gemini-1.5-flash", description="Model identifier")
+    model: str = Field(default=DEFAULT_LLM_MODEL, description="LiteLLM model identifier, e.g. 'gemini/<model>'")
     temperature: float = 0.2
     max_tokens: int = 1500
+    timeout_seconds: float = 30.0
+    num_retries: int = 2
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -76,8 +81,13 @@ class PhysicsSettings(BaseModel):
     battery_max_soc: float = 0.90
     battery_capacity_kwh: float = 500.0
     battery_max_power_kw: float = 100.0
-    building_c_in: float = 50.0      # Thermal capacitance (kWh / °C)
-    building_r_vent: float = 2.5     # Thermal resistance (°C / kW)
+    # 2R2C building thermal model (SRS section 6.1). Uncalibrated defaults except c_in / r_vent.
+    building_c_in: float = 50.0      # Indoor air + furnishings thermal capacitance (kWh / °C)
+    building_r_vent: float = 2.5     # Ventilation / infiltration resistance, indoor <-> outdoor (°C / kW)
+    building_c_wall: float = 200.0   # Building envelope (wall) thermal capacitance (kWh / °C)
+    building_r_in: float = 2.0       # Wall surface <-> indoor air resistance (°C / kW)
+    building_r_out: float = 6.0      # Wall <-> outdoor air resistance (°C / kW)
+    hvac_max_cooling_kw: float = 35.0  # Rated cooling of one zone's chiller share (kW thermal)
 
 class WeatherSettings(BaseModel):
     provider: str = "open-meteo"
@@ -96,9 +106,11 @@ class Settings(BaseSettings):
 
     # Flat environment variable mappings
     llm_provider: str = "mock"
-    llm_model: str = "gemini/gemini-1.5-flash"
+    llm_model: str = DEFAULT_LLM_MODEL
     llm_temperature: float = 0.2
     llm_max_tokens: int = 1500
+    llm_timeout_seconds: float = 30.0
+    llm_num_retries: int = 2
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -137,6 +149,12 @@ class Settings(BaseSettings):
     battery_max_soc: float = 0.90
     battery_capacity_kwh: float = 500.0
     battery_max_power_kw: float = 100.0
+    building_c_in: float = 50.0
+    building_r_vent: float = 2.5
+    building_c_wall: float = 200.0
+    building_r_in: float = 2.0
+    building_r_out: float = 6.0
+    hvac_max_cooling_kw: float = 35.0
     use_reference_baselines: bool = Field(
         default=False,
         description="When True, container falls back to reference baseline algorithms for agents 1, 2, 4"
@@ -182,6 +200,8 @@ class Settings(BaseSettings):
             model=self.llm_model,
             temperature=self.llm_temperature,
             max_tokens=self.llm_max_tokens,
+            timeout_seconds=self.llm_timeout_seconds,
+            num_retries=self.llm_num_retries,
             gemini_api_key=self.gemini_api_key,
             openai_api_key=self.openai_api_key,
             anthropic_api_key=self.anthropic_api_key,
@@ -247,6 +267,12 @@ class Settings(BaseSettings):
             battery_max_soc=self.battery_max_soc,
             battery_capacity_kwh=self.battery_capacity_kwh,
             battery_max_power_kw=self.battery_max_power_kw,
+            building_c_in=self.building_c_in,
+            building_r_vent=self.building_r_vent,
+            building_c_wall=self.building_c_wall,
+            building_r_in=self.building_r_in,
+            building_r_out=self.building_r_out,
+            hvac_max_cooling_kw=self.hvac_max_cooling_kw,
         )
 
     @property

@@ -3,7 +3,9 @@ name = "campusgrid-ai"
 version = "4.2.0"
 description = "Autonomous Multi-Agent Microgrid Energy Management System & Cyber-Physical Digital Twin"
 readme = "README.md"
-requires-python = ">=3.10"
+# 3.11+: current litellm releases import typing.NotRequired, which Python 3.10 does not have,
+# so on 3.10 every real LLM call fails. The Docker image already uses 3.11.
+requires-python = ">=3.11"
 
 # Core runtime: everything needed to boot the API and run the full test suite
 # with mock LLM / mock embedding / in-memory providers. Deliberately lightweight
@@ -16,7 +18,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "sqlmodel>=0.0.19",
     "sqlalchemy>=2.0.30",
-    "pulp>=2.8.0",
+    "pulp>=2.8.0,<4",  # PuLP 4 removes PULP_CBC_CMD and direct LpVariable construction used by the solvers
     "litellm>=1.40.0",
     "pyjwt>=2.8.0",
 ]
