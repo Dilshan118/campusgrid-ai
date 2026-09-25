@@ -70,6 +70,16 @@ def _has_control_characters(value: str) -> bool:
     return any(unicodedata.category(ch)[0] == "C" and ch not in "\n\r\t" for ch in value)
 
 
+def _may_be_parsed_as_json(content_type: str) -> bool:
+    """True for every body FastAPI may decode as JSON: application/json, any application/*+json,
+    and (in older FastAPI releases) a body sent with no Content-Type at all. Checking only for
+    'application/json' let 'application/vnd.api+json' carry unsanitized text to the agents."""
+    media_type = content_type.split(";", 1)[0].strip()
+    if not media_type:
+        return True
+    return media_type == "application/json" or (media_type.startswith("application/") and media_type.endswith("+json"))
+
+
 def _reject(exc: MaliciousInputError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.details["status"],
@@ -110,7 +120,7 @@ class InputSanitizationMiddleware:
             return
 
         content_type = header_map.get(b"content-type", b"").decode("latin-1").lower()
-        if "application/json" not in content_type:
+        if not _may_be_parsed_as_json(content_type):
             await self.app(scope, receive, send)
             return
 
@@ -139,9 +149,10 @@ class InputSanitizationMiddleware:
             if parsed is not None:
                 body = json.dumps(sanitize_data_structure(parsed)).encode("utf-8")
 
-        new_headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
-        new_headers.append((b"content-length", str(len(body)).encode("latin-1")))
-        scope = {**scope, "headers": new_headers}
+        if body:
+            new_headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
+            new_headers.append((b"content-length", str(len(body)).encode("latin-1")))
+            scope = {**scope, "headers": new_headers}
 
         body_sent = False
 

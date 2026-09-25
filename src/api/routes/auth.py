@@ -126,7 +126,7 @@ def get_my_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
 
 
 @router.get("/roles", response_model=APIResponse)
-def list_roles():
+def list_roles(_user: Dict[str, Any] = Depends(get_current_user)):
     return APIResponse(
         success=True,
         data={

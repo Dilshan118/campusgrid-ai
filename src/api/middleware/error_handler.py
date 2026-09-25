@@ -40,6 +40,17 @@ async def domain_exception_handler(request: Request, exc: DomainException):
     status_code = _status_for(exc)
     headers = {"WWW-Authenticate": "Bearer"} if status_code == 401 else None
     details = {k: v for k, v in (exc.details or {}).items() if k != "status"}
+    message = exc.message
+
+    if isinstance(exc, ProviderException):
+        # Provider messages and details embed raw driver / SDK text (hosts, SQL, key fragments).
+        logger.warning(
+            "Provider failure on %s %s (request_id=%s): %s | %s",
+            request.method, request.url.path, request.headers.get("X-Request-ID"), exc.message, details,
+        )
+        provider = details.get("provider", "external")
+        message = f"The {provider} provider call failed; details are in the server log."
+        details = {"provider": provider}
 
     return JSONResponse(
         status_code=status_code,
@@ -47,7 +58,7 @@ async def domain_exception_handler(request: Request, exc: DomainException):
         content={
             "success": False,
             "error_code": exc.error_code,
-            "message": exc.message,
+            "message": message,
             "details": details
         }
     )
