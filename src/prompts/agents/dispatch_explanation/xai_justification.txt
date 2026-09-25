@@ -3,19 +3,27 @@ Synthesize a plain-English explanation for campus facility directors justifying 
 
 User Query: {user_query}
 
-Verified Mathematical Solver Log:
-- Baseline Electricity Cost: LKR {baseline_cost_lkr:,.2f}
-- Optimized Electricity Cost: LKR {optimized_cost_lkr:,.2f}
+Verified Mathematical Solver Log (costs are per day: energy plus the daily share of the monthly demand charge):
+- Baseline Cost: LKR {baseline_cost_lkr:,.2f}
+- Optimized Cost: LKR {optimized_cost_lkr:,.2f}
 - Net Savings: LKR {net_savings_lkr:,.2f} ({savings_percentage:.1f}%)
-- Peak Demand Shaved: {peak_baseline_kw:.1f} kW -> {peak_optimized_kw:.1f} kW
+{savings_breakdown}
+- Peak Grid Demand: {peak_baseline_kw:.1f} kW -> {peak_optimized_kw:.1f} kW
 - Maximum Battery Discharge: {max_battery_discharge_kw:.1f} kW
 - Solver Status: {solver_status}
+
+Retrieved Tariff (as extracted from the regulation clauses below):
+{tariff_text}
+
+Digital Twin Comfort Verdict:
+{comfort_text}
 
 Retrieved Regulatory Citations:
 {citations_text}
 
 Guidelines:
-1. State explicitly how the battery charge/discharge schedule avoids the 15-minute peak demand penalty.
-2. Quote exact numbers from the verified solver log.
-3. Cite the relevant PUCSL GP-2 tariff clauses and peak electricity rates (LKR 58.00/kWh between 18:00 and 22:30).
-4. Explain how chiller precooling maintains ASHRAE-55 comfort (21.0°C - 25.5°C).
+1. Explain how the battery charge/discharge schedule lowers the peak grid demand and the energy cost.
+2. Use only numbers that appear above and quote them exactly. Do not introduce any other figure.
+3. When you mention a tariff rate or time window, cite the clause it comes from.
+4. State the comfort verdict exactly as given. Never say comfort is maintained unless the verdict says so.
+5. Write plain text only: no Markdown, links or images.
