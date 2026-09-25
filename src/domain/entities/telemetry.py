@@ -24,11 +24,3 @@ class PowerForecast(BaseModel):
     upper_bound_kw: List[float]
     anomaly_indices: List[int] = Field(default_factory=list)
     model_version: str = "v1.0-lightgbm"
-
-class WeatherObservation(BaseModel):
-    """Ambient weather condition observation."""
-    time_slot: str
-    temperature_c: float
-    humidity_pct: Optional[float] = None
-    solar_irradiance_wm2: Optional[float] = None
-    condition_summary: Optional[str] = None

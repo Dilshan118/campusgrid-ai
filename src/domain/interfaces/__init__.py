@@ -22,7 +22,7 @@ from src.domain.interfaces.tool import Tool, ToolResult
 # 4 Specialized ML Agent Interfaces
 from src.domain.interfaces.forecaster import DemandForecasterInterface, ForecasterTrainerInterface
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
-from src.domain.interfaces.policy_extractor import RegulatoryRuleExtractorInterface, PolicySearchEngineInterface
+from src.domain.interfaces.policy_extractor import RegulatoryRuleExtractorInterface
 from src.domain.interfaces.optimizer import (
     MicrogridOptimizerInterface,
     XAIExplainerInterface,
@@ -55,7 +55,6 @@ __all__ = [
     "BuildingThermalTwinInterface",
     "BatteryDynamicsInterface",
     "RegulatoryRuleExtractorInterface",
-    "PolicySearchEngineInterface",
     "MicrogridOptimizerInterface",
     "XAIExplainerInterface",
     "FaithfulnessVerifierInterface",

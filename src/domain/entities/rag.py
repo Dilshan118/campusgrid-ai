@@ -15,17 +15,3 @@ class DocumentClause(BaseModel):
     content: str
     effective_date: Optional[str] = None
     embedding: Optional[List[float]] = None
-
-class Citation(BaseModel):
-    """Verified regulatory citation presented in XAI explanations."""
-    document_title: str
-    section_clause: str
-    content: str
-    confidence_score: float
-    retrieval_method: str = "hybrid_rrf"
-
-class SearchPassage(BaseModel):
-    """Result of vector or keyword retrieval."""
-    clause: DocumentClause
-    score: float
-    retrieval_type: str = "dense"  # "dense", "sparse_bm25", "hybrid_rrf"
