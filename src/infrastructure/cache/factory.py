@@ -12,5 +12,10 @@ class CacheProviderFactory:
 
     @staticmethod
     def create(settings: CacheSettings) -> CacheProvider:
-        # Defaults to in-memory cache
-        return MemoryCacheProvider(default_ttl_seconds=settings.ttl_seconds)
+        provider_name = (settings.provider or "memory").lower().strip()
+        if provider_name == "memory":
+            return MemoryCacheProvider(default_ttl_seconds=settings.ttl_seconds)
+        # Previously every value (including 'redis') silently produced the in-memory cache.
+        raise ValueError(
+            f"CACHE_PROVIDER='{settings.provider}' is not implemented; only 'memory' is supported."
+        )

@@ -1,6 +1,6 @@
 """
 CampusGrid AI: Reference Baseline Thermal & Battery Models
-2R2C continuous thermal model and battery degradation/SOC model.
+Single-node (1R1C) thermal model — the simplest stand-in, without the 2R2C wall node — and battery SOC model.
 Preserved as reference benchmarks for Member 3.
 """
 
@@ -8,7 +8,7 @@ from typing import List, Tuple
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
 
 class BaselineBuildingThermalTwin(BuildingThermalTwinInterface):
-    """Continuous 2-Resistance 2-Capacitance thermal network simulator."""
+    """Continuous single-resistance, single-capacitance (1R1C) thermal simulator (reference stand-in)."""
 
     def __init__(self, c_in: float = 50.0, r_vent: float = 2.5):
         self.c_in = c_in        # Thermal capacitance (kWh / °C)
