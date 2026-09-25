@@ -47,10 +47,17 @@ def test_fallback_can_be_switched_off_for_members_testing_their_own_code(monkeyp
 
 
 def test_member_slices_receive_physics_settings():
+    """Settings must reach the solver's maths, not just its attributes: the plan itself uses them."""
     container = _container(battery_capacity_kwh=800.0, battery_max_power_kw=150.0)
-    assert container.agent4_dispatch.optimizer.battery_cap_kwh == 800.0
-    assert container.agent4_dispatch.optimizer.max_kw == 150.0
     assert container.agent2_twin.battery_dynamics.capacity_kwh == 800.0
+    res = container.orchestrator.execute({"query": PLAN_QUERY, "user_id": "admin"})
+    assert res.success, res.error
+    rec = res.data["recommendation"]
+    solver = rec["solver_summary"]
+    assert max(solver["battery_soc_kwh"]) <= 0.9 * 800.0 + 1e-6
+    assert max(solver["battery_soc_kwh"]) > 0.9 * 500.0  # a 500 kWh battery could never reach this
+    assert max(solver["battery_discharge_kw"]) <= 150.0 + 1e-6
+    assert rec["battery_limits"]["capacity_kwh"] == 800.0 and rec["battery_limits"]["max_soc_kwh"] == 720.0
 
 
 def test_parallel_and_sequential_pipelines_give_identical_plans():
@@ -159,9 +166,20 @@ def test_route_handlers_do_not_block_the_event_loop(route):
     assert not inspect.iscoroutinefunction(route.endpoint), f"{route.path} is async def but calls blocking code"
 
 
-def test_campus_headcounts_are_capped_to_the_room_before_the_comfort_check():
-    """Agent 1's counts can be campus-wide; Agent 2 simulates one room. The hand-off caps them."""
+def test_headcounts_above_room_capacity_are_capped_before_the_comfort_check():
+    """Agent 2 simulates one room; a timetable headcount above its capacity is capped at the hand-off."""
+    class _OverbookedTimetable:
+        entry = {"schedule_id": 1, "room_id": "LH-1", "course_code": "X", "start_time": "00:00",
+                 "end_time": "23:30", "expected_students": 1000}
+
+        def get_schedule_for_day(self, day_of_week):
+            return [dict(self.entry, day_of_week=day_of_week)]
+
+        def get_room_occupancy(self, room_id, time_slot, day_of_week):
+            return 1000
+
     container = _container(use_reference_baselines=True)
+    container.agent1_telemetry.timetable_repo = _OverbookedTimetable()
     res = container.orchestrator.execute({"query": PLAN_QUERY, "user_id": "admin"})
     assert res.success, res.error
     capacity = container.room_repo.get_by_id("LH-1")["max_capacity"]

@@ -81,7 +81,7 @@ class SpyLLMProvider(LLMProvider):
 # TC-S2-01 — Raw historical meter endpoint exposure
 # ---------------------------------------------------------------------------
 
-def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
+def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client, test_container):
     """TC-S2-01: Does GET /api/telemetry/historical protect sub-meter kW with differential privacy noise?"""
     response_1 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
     response_2 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
@@ -90,8 +90,12 @@ def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
     body_1 = response_1.json()["data"]
     body_2 = response_2.json()["data"]
 
-    # Differential-privacy noise is applied on this export path so repeated calls vary
-    readings_are_noised = body_1 != body_2
+    # Differential-privacy noise is applied on this export path: the export must differ from the exact
+    # meter readings, and must be the SAME on every call — fresh noise per call lets an attacker
+    # average repeated calls back to the exact values.
+    raw = [r.model_dump() for r in test_container.meter_repo.get_historical_profile("2026-09-06")]
+    readings_are_noised = body_1 != raw
+    repeat_is_stable = body_1 == body_2
     exact_kw_present = any(isinstance(r.get("base_load_kw"), (int, float)) for r in body_1)
     has_privacy_header = "laplace" in response_1.headers.get("X-Privacy-Mechanism", "")
 
@@ -99,9 +103,10 @@ def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
         "test_id": "TC-S2-01",
         "test_objective": "Determine whether raw sub-meter readings are exposed at full precision, enabling NILM-style appliance disaggregation.",
         "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice by an authenticated client.",
-        "expected_behaviour": "Exported readings should carry calibrated DP noise (see get_privacy_protected_export) so repeated queries do not reveal identical exact wattage.",
+        "expected_behaviour": "Exported readings should carry calibrated DP noise (see get_privacy_protected_export) that differs from the exact wattage and is fixed per date, so averaging repeated queries cannot recover it.",
         "actual_behaviour": (
-            f"Endpoint returned {len(body_1)} intervals; readings perturbed by DP noise across calls: {readings_are_noised}; "
+            f"Endpoint returned {len(body_1)} intervals; readings differ from exact meter values: {readings_are_noised}; "
+            f"same noisy values on a repeated call (averaging-resistant): {repeat_is_stable}; "
             f"privacy mechanism header present: {has_privacy_header}."
         ),
         "evidence_log": f"[TC-S2-01] first_row={body_1[0] if body_1 else None}, header={response_1.headers.get('X-Privacy-Mechanism')}",
@@ -113,8 +118,8 @@ def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
         ),
     }
     assert_schema(case)
-    assert readings_are_noised and has_privacy_header, (
-        "Expected export to apply differential privacy noise and set X-Privacy-Mechanism header"
+    assert readings_are_noised and repeat_is_stable and has_privacy_header, (
+        "Expected export to apply per-date differential privacy noise and set X-Privacy-Mechanism header"
     )
 
 
