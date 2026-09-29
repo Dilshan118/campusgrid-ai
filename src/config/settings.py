@@ -33,9 +33,10 @@ class LLMSettings(BaseModel):
     groq_api_key: Optional[str] = None
 
 class EmbeddingSettings(BaseModel):
-    provider: str = Field(default="auto", description="'auto', 'sentence_transformers', 'mock'")
+    provider: str = Field(default="auto", description="'auto', 'sentence_transformers', 'google', 'gemini', 'mock'")
     model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     dimension: int = 384
+    api_key: Optional[str] = None
 
 class VectorStoreSettings(BaseModel):
     provider: str = Field(default="memory", description="'memory', 'pgvector', 'chroma'")
@@ -174,6 +175,18 @@ class Settings(BaseSettings):
         )
     )
 
+    def __init__(self, **values):
+        super().__init__(**values)
+        if self.app_env == "test":
+            if "vector_store_provider" not in values:
+                self.vector_store_provider = "memory"
+            if "database_provider" not in values:
+                self.database_provider = "in_memory"
+            if "llm_provider" not in values:
+                self.llm_provider = "mock"
+            if "embedding_provider" not in values:
+                self.embedding_provider = "mock"
+
     @model_validator(mode="after")
     def _validate_production_safety(self) -> "Settings":
         if self.app_env == "production" and self.jwt_secret_key == DEFAULT_JWT_SECRET:
@@ -217,6 +230,7 @@ class Settings(BaseSettings):
             provider=provider,
             model=self.embedding_model,
             dimension=self.embedding_dimension,
+            api_key=self.gemini_api_key,
         )
 
     @property

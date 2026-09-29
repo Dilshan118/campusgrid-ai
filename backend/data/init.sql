@@ -70,9 +70,9 @@ CREATE TABLE IF NOT EXISTS document_clauses (
     section_title VARCHAR(255),
     effective_date DATE,
     content TEXT NOT NULL,
-    -- 384 dimensions matches EMBEDDING_DIMENSION for all-MiniLM-L6-v2.
-    -- Changing the embedding model requires altering this column and re-indexing.
-    embedding vector(384)
+    -- 768 dimensions matches Google gemini-embedding-001 / text-embedding-004.
+    -- If using sentence-transformers/all-MiniLM-L6-v2, change this to vector(384).
+    embedding vector(768)
 );
 
 -- Audit and Log Store (Encrypted at rest / Append-only)
