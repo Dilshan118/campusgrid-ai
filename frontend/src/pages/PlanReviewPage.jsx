@@ -29,7 +29,7 @@ const PROVENANCE_TEXT = {
 };
 
 export default function PlanReviewPage({ params }) {
-  const { data: record, error, loading, reload } = useAsync(() => api.auditRecord(params.id), [params.id]);
+  const { data: record, error, loading, reload } = useAsync(() => api.auditRecord(params.id, { includeDetails: false }), [params.id]);
 
   if (loading && !record) {
     return (

@@ -2,16 +2,17 @@
 CampusGrid AI: Simulation Tool (MCP-Compliant)
 Executes 2R2C continuous thermal physics equations and evaluates ASHRAE-55 comfort feasibility.
 
-Delegates the actual 2R2C differential equation to `BuildingThermalTwin`
-(src/agents/digital_twin/thermal_model.py) so there is exactly one implementation of
-the physics in the codebase — this tool is a thin MCP-facing wrapper around it.
+Delegates the actual 2R2C differential equation to the injected thermal twin (the member
+implementation or its reference baseline, whichever the container selected) so there is
+exactly one implementation of the physics — this tool is a thin MCP-facing wrapper around it.
+It depends only on the domain interface; the container supplies the twin and comfort limits.
 """
 
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from src.domain.interfaces.tool import Tool, ToolResult
-from src.agents.digital_twin.thermal_model import BuildingThermalTwin
-from src.config.settings import get_settings
+from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface
+from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C
 
 # Hard physical plausibility envelope for the tool boundary. Independent of the ASHRAE-55
 # comfort band (that is a target range for the *output*; these are sanity bounds on the
@@ -23,14 +24,30 @@ MAX_HVAC_POWER_KW = 1000.0
 # The whole pipeline is built around a 48 half-hour-interval horizon. Anything longer is
 # not a real dispatch request — it is either a bug or a compute-exhaustion attempt.
 MAX_INTERVALS = 48
+# Step length bounds: the pipeline uses 0.5 h; tiny or huge steps make explicit Euler meaningless.
+MIN_DT_HOURS = 0.05
+MAX_DT_HOURS = 1.0
 
 class SimulationTool(Tool):
     """MCP tool executing building thermal grey-box differential equations."""
 
-    def __init__(self, c_in: float = 50.0, r_vent: float = 2.5):
+    def __init__(
+        self,
+        c_in: float = 50.0,
+        r_vent: float = 2.5,
+        thermal_twin: Optional[BuildingThermalTwinInterface] = None,
+        comfort_min_c: float = COMFORT_TEMP_MIN_C,
+        comfort_max_c: float = COMFORT_TEMP_MAX_C,
+    ):
         self.c_in = c_in
         self.r_vent = r_vent
-        self.thermal_twin = BuildingThermalTwin(c_in=c_in, r_vent=r_vent)
+        if thermal_twin is None:
+            # Standalone use (tests, the MCP server factory). The container always injects the twin.
+            from src.agents.digital_twin.thermal_model import BuildingThermalTwin
+            thermal_twin = BuildingThermalTwin(c_in=c_in, r_vent=r_vent)
+        self.thermal_twin = thermal_twin
+        self.comfort_min_c = comfort_min_c
+        self.comfort_max_c = comfort_max_c
 
     @property
     def name(self) -> str:
@@ -60,6 +77,7 @@ class SimulationTool(Tool):
         ambient_temps: List[float],
         occupants: List[int],
         hvac_powers: List[float],
+        dt_hours: float = 0.5,
     ) -> None:
         """Rejects physically impossible parameters before any equation runs.
 
@@ -72,6 +90,8 @@ class SimulationTool(Tool):
                 f"initial_temp_c={initial_temp} outside physical envelope "
                 f"[{MIN_PHYSICAL_TEMP_C}, {MAX_PHYSICAL_TEMP_C}]"
             )
+        if not (MIN_DT_HOURS <= dt_hours <= MAX_DT_HOURS):
+            raise ValueError(f"dt_hours={dt_hours} outside supported step range [{MIN_DT_HOURS}, {MAX_DT_HOURS}]")
         if not (len(ambient_temps) == len(occupants) == len(hvac_powers)):
             raise ValueError(
                 "ambient_temps, occupant_counts and hvac_power_kw must be equal length "
@@ -111,7 +131,7 @@ class SimulationTool(Tool):
             occupants = [int(o) for o in kwargs.get("occupant_counts", [])]
             hvac_powers = [float(p) for p in kwargs.get("hvac_power_kw", [])]
             dt_hours = float(kwargs.get("dt_hours", 0.5))
-            self._validate_bounds(initial_temp, ambient_temps, occupants, hvac_powers)
+            self._validate_bounds(initial_temp, ambient_temps, occupants, hvac_powers, dt_hours)
         except (TypeError, ValueError) as exc:
             return ToolResult(
                 success=False,
@@ -128,8 +148,8 @@ class SimulationTool(Tool):
             dt_hours=dt_hours,
         )
 
-        comfort_min = get_settings().physics.comfort_min_temp_c
-        comfort_max = get_settings().physics.comfort_max_temp_c
+        comfort_min = self.comfort_min_c
+        comfort_max = self.comfort_max_c
         violations = 0
         max_deviation = 0.0
         for temp in indoor_temps:

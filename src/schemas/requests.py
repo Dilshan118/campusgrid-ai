@@ -3,8 +3,9 @@ CampusGrid AI: Public API Request Schemas
 Pydantic DTOs for client request payloads.
 """
 
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from datetime import date
+from typing import Annotated, List, Optional
+from pydantic import AfterValidator, BaseModel, Field
 
 class OperatorQueryRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=2000, description="Natural-language operator query")
@@ -24,11 +25,25 @@ class OperatorQueryRequest(BaseModel):
 
 ISO_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 
+
+def validate_iso_date(value: Optional[str]) -> Optional[str]:
+    """The pattern checks the shape; this rejects impossible dates such as 2026-13-45."""
+    if value is None:
+        return value
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("must be a real calendar date in YYYY-MM-DD format")
+    return value
+
+
+IsoDate = Annotated[str, AfterValidator(validate_iso_date)]
+
 class WhatIfSimulationRequest(BaseModel):
     initial_temp_c: float = Field(default=24.0, ge=18.0, le=35.0)
     ambient_temp_delta_c: float = Field(default=0.0, ge=-10.0, le=15.0)
     occupancy_multiplier: float = Field(default=1.0, ge=0.0, le=5.0)
-    date: Optional[str] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Weather date; defaults to tomorrow")
+    date: Optional[IsoDate] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Weather date; defaults to tomorrow")
     room: str = Field(default="LH-1", max_length=20, description="Room whose capacity bounds the simulated occupancy")
 
 class OptimizationRunRequest(BaseModel):
@@ -36,7 +51,7 @@ class OptimizationRunRequest(BaseModel):
     max_charge_rate_kw: float = Field(default=100.0, gt=0, le=5_000)
     max_discharge_rate_kw: float = Field(default=100.0, gt=0, le=5_000)
     initial_soc_ratio: float = Field(default=0.50, ge=0.20, le=0.90)
-    date: Optional[str] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Forecast date; defaults to tomorrow")
+    date: Optional[IsoDate] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Forecast date; defaults to tomorrow")
     room: str = Field(default="LH-1", max_length=20)
 
 class RAGSearchRequest(BaseModel):
@@ -56,7 +71,7 @@ class AuditApprovalRequest(BaseModel):
 class RAGIngestRequest(BaseModel):
     text: Optional[str] = Field(default=None, max_length=200_000, description="Raw markdown or text clause to ingest")
     source_document: Optional[str] = Field(default="Custom Regulatory Document", max_length=255, description="Title of the source regulation")
-    effective_date: Optional[str] = Field(
+    effective_date: Optional[IsoDate] = Field(
         default="2024-01-01", pattern=ISO_DATE_PATTERN, description="Effective date (YYYY-MM-DD)"
     )
 

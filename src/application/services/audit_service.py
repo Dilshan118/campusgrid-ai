@@ -4,6 +4,7 @@ Handles transaction recording, retrieval of audit trails, human approval decisio
 and verification of the tamper-evident hash chain.
 """
 
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from src.domain.interfaces.repositories import AuditLogRepository
@@ -28,6 +29,10 @@ class AuditService:
 
     def __init__(self, audit_repo: AuditLogRepository):
         self.audit_repo = audit_repo
+        # Serialises "is there already a decision?" + "append the decision", so two managers
+        # deciding the same plan at once cannot both succeed. (With PostgreSQL the unique index
+        # uq_audit_one_decision_per_recommendation also enforces this across processes.)
+        self._decision_lock = threading.Lock()
 
     def log_operator_action(
         self,
@@ -106,11 +111,11 @@ class AuditService:
                 break
         return views
 
-    def get_record_view(self, log_id: int) -> Dict[str, Any]:
+    def get_record_view(self, log_id: int, include_agent_sequence: bool = True) -> Dict[str, Any]:
         record = self.audit_repo.get_by_id(log_id)
         if record is None:
             raise EntityNotFoundError(entity_type="AuditRecord", identifier=log_id)
-        return self.to_view(record, include_agent_sequence=True)
+        return self.to_view(record, include_agent_sequence=include_agent_sequence)
 
     def list_pending(self, limit: int = 20) -> List[Dict[str, Any]]:
         return self.list_views(limit=limit, record_type=RECORD_DISPATCH_RECOMMENDATION, status=APPROVAL_PENDING)
@@ -126,6 +131,17 @@ class AuditService:
         approved: bool,
         notes: Optional[str] = None,
         acknowledge_warnings: bool = False,
+    ) -> Dict[str, Any]:
+        with self._decision_lock:
+            return self._record_decision_locked(log_id, approver_id, approved, notes, acknowledge_warnings)
+
+    def _record_decision_locked(
+        self,
+        log_id: int,
+        approver_id: str,
+        approved: bool,
+        notes: Optional[str],
+        acknowledge_warnings: bool,
     ) -> Dict[str, Any]:
         record = self.audit_repo.get_by_id(log_id)
         if record is None:

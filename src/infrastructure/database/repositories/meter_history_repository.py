@@ -4,10 +4,9 @@ Adapters for historical sub-meter telemetry intervals.
 
 OWNER: Member 2 (Developer 1 - Telemetry & Machine Learning)
 
-A PostgresMeterHistoryRepository does not exist yet, so the DI container falls back to
-the CSV-seeded in-memory store even when DATABASE_PROVIDER=postgres — meaning Agent 1
-never reads Neon. Adding it is Developer 1's task; the `meter_history` table in
-backend/data/init.sql now mirrors TelemetryInterval field-for-field.
+InMemoryMeterHistoryRepository serves the CSV seed day (the same 48 rows for every date);
+PostgresMeterHistoryRepository reads the `meter_history` table in backend/data/init.sql
+(selected by DATABASE_PROVIDER=postgres), falling back to the seed day when a date has no rows.
 """
 
 import os

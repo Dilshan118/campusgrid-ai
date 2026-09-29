@@ -1,15 +1,22 @@
 You are an automated Fact-Checking and Responsible AI Auditor.
-Compare the generated explanation against the verified solver numbers and retrieved citations.
+Compare the generated explanation against the verified solver numbers and the verified context below.
 
 Explanation:
 {generated_text}
 
-Verified Solver Log:
-- Net Savings: LKR {net_savings_lkr}
-- Peak Shaved: {peak_baseline_kw} kW to {peak_optimized_kw} kW
-- Cost: LKR {optimized_cost_lkr}
+Verified Solver Log (costs are per day):
+- Baseline cost: LKR {baseline_cost_lkr}
+- Optimized cost: LKR {optimized_cost_lkr}
+- Net Savings: LKR {net_savings_lkr} ({savings_percentage}%)
+- Peak Grid Demand: {peak_baseline_kw} kW to {peak_optimized_kw} kW
 
-Return JSON:
+Verified Context (operator request, retrieved tariff, comfort verdict, battery limits, cited clauses):
+{reference_text}
+
+A claim is unfaithful if it states a number, rate, time window, clause or comfort outcome that the
+material above does not support, or contradicts the comfort verdict.
+
+Return JSON only:
 {{
   "is_faithful": true/false,
   "hallucinated_claims": ["list", "of", "unverified", "claims"],

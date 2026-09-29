@@ -6,8 +6,36 @@ Generates structured intents, grounded XAI justifications, and fact-check respon
 
 import time
 import json
+import re
 from typing import List, Dict, Any, Optional
 from src.domain.interfaces.llm import LLMProvider, LLMMessage, LLMResponse
+
+# Figures the XAI prompt lists in its "Verified Mathematical Solver Log"; the mock explanation
+# quotes them back, so offline plans pass the deterministic number check honestly.
+_SOLVER_LOG_PATTERNS = {
+    "baseline": r"Baseline Cost: LKR (-?[\d,]+\.\d+)",
+    "optimized": r"Optimized Cost: LKR (-?[\d,]+\.\d+)",
+    "savings": r"Net Savings: LKR (-?[\d,]+\.\d+) \((-?[\d.]+)%\)",
+    "peak": r"Peak Grid Demand: ([\d.]+) kW -> ([\d.]+) kW",
+    "discharge": r"Maximum Battery Discharge: ([\d.]+) kW",
+}
+
+
+def _grounded_mock_explanation(prompt: str) -> Optional[str]:
+    found = {k: re.search(p, prompt) for k, p in _SOLVER_LOG_PATTERNS.items()}
+    if not all(found.values()):
+        return None
+    comfort = (
+        "The digital twin confirms the room stays within the ASHRAE-55 comfort band."
+        if "Comfort maintained" in prompt
+        else "The digital twin did not confirm the comfort band, so review the comfort warning before approving."
+    )
+    return (
+        f"Based on the MILP solver's plan, the battery discharges at up to {found['discharge'].group(1)} kW, "
+        f"lowering the peak grid demand from {found['peak'].group(1)} kW to {found['peak'].group(2)} kW. "
+        f"The daily cost falls from LKR {found['baseline'].group(1)} to LKR {found['optimized'].group(1)}, "
+        f"a saving of LKR {found['savings'].group(1)} ({found['savings'].group(2)}%). {comfort}"
+    )
 
 class MockLLMProvider(LLMProvider):
     """Deterministic LLM Provider that synthesizes domain-grounded responses without network calls."""
@@ -37,24 +65,24 @@ class MockLLMProvider(LLMProvider):
         # 1. Check if an explicit response override was configured
         if self.default_response:
             content = self.default_response
-        # 2. Intent extraction prompt
+        # 2. Intent extraction prompt. The mock cannot read free text, so it abstains with a label
+        #    outside the router's allow-list; the router then returns None and the deterministic
+        #    rules decide. (Always answering "optimize_dispatch" turned every unclear or off-topic
+        #    query into a pending dispatch plan.)
         elif "intent" in system_instruction.lower():
             content = json.dumps({
-                "action": "optimize_dispatch",
-                "target": "campus_chillers",
-                "building": "Main Academic Complex",
-                "room": "Lecture Hall 1",
-                "date": "2026-09-06",
-                "target_temp_c": 23.5,
-                "confidence": 0.95
+                "action": "abstain",
+                "confidence": 0.0,
+                "reasoning": "Mock provider does not classify free text; the rule-based intent stands."
             })
-        # 3. Faithfulness check prompt
-        elif "faithfulness" in system_instruction.lower() or "verify" in system_instruction.lower():
+        # 3. Faithfulness check prompt. The mock does not read the text it is asked to audit, and
+        #    says so; the verifier's deterministic number check is what decides offline.
+        elif any(w in system_instruction.lower() for w in ("faithfulness", "verify", "auditor")):
             content = json.dumps({
                 "is_faithful": True,
                 "hallucinated_claims": [],
                 "confidence": 1.0,
-                "reasoning": "All stated kilowatt values and tariff rates match mathematical solver output."
+                "reasoning": "Mock provider does not audit text; the deterministic number check decides."
             })
         # 4. Agent 1 forecast briefing note (summarisation)
         elif "briefing note" in system_instruction.lower():
@@ -62,7 +90,10 @@ class MockLLMProvider(LLMProvider):
                 "Tomorrow's demand follows the usual weekday lecture pattern with an afternoon peak. "
                 "Flagged intervals coincide with the hottest hours of the day."
             )
-        # 5. Standard XAI Plain-English Justification
+        # 5. XAI justification prompt: quote the solver figures the prompt provides
+        elif _grounded_mock_explanation(last_user_message):
+            content = _grounded_mock_explanation(last_user_message)
+        # 6. Anything else: a fixed sample justification
         else:
             content = (
                 "Based on the mathematical optimization (MILP solver), CampusGrid AI successfully scheduled "

@@ -55,6 +55,7 @@ from src.agents.telemetry.forecaster import DemandForecaster
 from src.agents.digital_twin.thermal_model import BuildingThermalTwin
 from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
 from src.agents.dispatch_explanation.milp_solver import CampusMicrogridOptimizer
+from src.agents.digital_twin.mcp_server import MCPToolServer
 from src.domain.entities.telemetry import TelemetryInterval
 from src.domain.entities.optimization import OptimizationInput
 from src.infrastructure.reference_baselines import (
@@ -150,13 +151,10 @@ class Container:
             latitude=self.settings.weather.campus_latitude,
             longitude=self.settings.weather.campus_longitude
         )
-        self.simulation_tool = SimulationTool(
-            c_in=self.settings.physics.building_c_in,
-            r_vent=self.settings.physics.building_r_vent
-        )
+        # The simulation tool wraps the thermal twin, so it is built in step 5 once the twin
+        # (member code or reference baseline) has been chosen; the registry is filled there too.
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(self.weather_tool)
-        self.tool_registry.register(self.simulation_tool)
 
         # 4. Application Services
         self.keyword_engine = BM25SearchEngine()
@@ -204,6 +202,17 @@ class Container:
                 optimizer = self._optimizer(baseline=True)
                 self._mark_auto("agent4")
 
+        # Tools exposed to MCP clients at POST /api/mcp use the same twin as Agent 2.
+        self.simulation_tool = SimulationTool(
+            c_in=physics.building_c_in,
+            r_vent=physics.building_r_vent,
+            thermal_twin=thermal_twin,
+            comfort_min_c=physics.comfort_min_temp_c,
+            comfort_max_c=physics.comfort_max_temp_c,
+        )
+        self.tool_registry.register(self.simulation_tool)
+        self.mcp_server = MCPToolServer(tools=self.tool_registry.list_tools())
+
         self.agent1_telemetry = TelemetryForecastingAgent(
             meter_repo=self.meter_repo,
             timetable_repo=self.timetable_repo,
@@ -215,10 +224,21 @@ class Container:
             simulation_tool=self.simulation_tool,
             thermal_twin=thermal_twin,
             battery_dynamics=battery,
+            comfort_min_c=physics.comfort_min_temp_c,
+            comfort_max_c=physics.comfort_max_temp_c,
+            battery_capacity_kwh=physics.battery_capacity_kwh,
+            hvac_max_cooling_kw=physics.hvac_max_cooling_kw,
         )
         self.agent4_dispatch = DispatchExplanationAgent(
             llm_provider=self.llm_provider,
             optimizer=optimizer,
+            battery_defaults={
+                "battery_capacity_kwh": physics.battery_capacity_kwh,
+                "max_charge_rate_kw": physics.battery_max_power_kw,
+                "max_discharge_rate_kw": physics.battery_max_power_kw,
+                "min_soc_ratio": physics.battery_min_soc,
+                "max_soc_ratio": physics.battery_max_soc,
+            },
         )
 
         self.agent3_rag = PolicyRAGAgent(
@@ -277,7 +297,8 @@ class Container:
                                              min_soc_pct=p.battery_min_soc, max_soc_pct=p.battery_max_soc),
             )
         return (
-            BuildingThermalTwin(c_in=p.building_c_in, r_vent=p.building_r_vent),
+            BuildingThermalTwin(c_in=p.building_c_in, r_vent=p.building_r_vent, c_wall=p.building_c_wall,
+                                r_in=p.building_r_in, r_out=p.building_r_out),
             BatteryDynamicsModel(capacity_kwh=p.battery_capacity_kwh, max_power_kw=p.battery_max_power_kw,
                                  min_soc_pct=p.battery_min_soc, max_soc_pct=p.battery_max_soc),
         )

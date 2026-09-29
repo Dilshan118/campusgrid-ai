@@ -12,7 +12,11 @@ RESPONSIBILITIES:
    - Round-trip efficiency losses: 92% (one-way eta = sqrt(0.92)).
 3. Enforce campus power balance at every 30-minute interval:
    - Grid[t] + Solar[t] + Discharge[t] >= Demand[t] + Charge[t].
-4. Return verified `OptimizationResult` containing schedule, costs, savings, and binding constraints.
+4. End the day with at least the starting charge, so savings never come from simply
+   emptying the battery (energy that would have to be bought back tomorrow).
+5. Return verified `OptimizationResult` containing schedule, costs, savings, and binding constraints.
+   Costs are per day: energy cost + the daily share (1/30) of the monthly maximum-demand charge,
+   the same quantity the objective minimises.
 """
 
 import time
@@ -35,8 +39,19 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
     """
 
     def __init__(self, battery_cap_kwh: float = 500.0, max_kw: float = 100.0):
+        # Site battery (from settings via the container). Used for any battery field the caller's
+        # OptimizationInput leaves unset; explicitly supplied values (e.g. the dispatch form) win.
         self.battery_cap_kwh = battery_cap_kwh
         self.max_kw = max_kw
+
+    def _with_site_battery(self, opt_input: OptimizationInput) -> OptimizationInput:
+        site = {
+            "battery_capacity_kwh": self.battery_cap_kwh,
+            "max_charge_rate_kw": self.max_kw,
+            "max_discharge_rate_kw": self.max_kw,
+        }
+        unset = {k: v for k, v in site.items() if k not in opt_input.model_fields_set}
+        return opt_input.model_copy(update=unset) if unset else opt_input
 
     def solve(self, opt_input: OptimizationInput) -> OptimizationResult:
         """
@@ -45,6 +60,7 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
         that forces the battery to either charge or discharge, never both.
         """
         start_time = time.perf_counter()
+        opt_input = self._with_site_battery(opt_input)
 
         T = len(opt_input.time_slots)
         if not (len(opt_input.base_load_kw) == T
@@ -138,6 +154,11 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
                 discharge_kw[t] <= opt_input.max_discharge_rate_kw * (1 - is_charging[t])
             ), f"Discharge_Exclusivity_{t}"
 
+        # End-of-day energy: without this the cheapest "plan" empties the battery and books the
+        # stored energy as savings, although it must be bought back the next day.
+        if T > 0:
+            prob += soc_kwh[T - 1] >= initial_soc, "Terminal_SOC"
+
         solver = pulp.PULP_CBC_CMD(msg=False)
         status = prob.solve(solver)
         solver_status = pulp.LpStatus[status]
@@ -153,17 +174,24 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
         res_discharge = [round(float(pulp.value(discharge_kw[t])), 2) for t in range(T)]
         res_soc = [round(float(pulp.value(soc_kwh[t])), 2) for t in range(T)]
 
-        opt_cost = sum(res_grid[t] * opt_input.grid_tariff_lkr_kwh[t] * dt for t in range(T))
-        baseline_cost = sum(
+        opt_energy_cost = sum(res_grid[t] * opt_input.grid_tariff_lkr_kwh[t] * dt for t in range(T))
+        baseline_energy_cost = sum(
             max(0.0, opt_input.base_load_kw[t] - opt_input.solar_gen_kw[t]) * opt_input.grid_tariff_lkr_kwh[t] * dt
             for t in range(T)
         )
 
-        net_savings = max(0.0, baseline_cost - opt_cost)
-        savings_pct = (net_savings / baseline_cost * 100.0) if baseline_cost > 0 else 0.0
-
         peak_base = max(max(0.0, opt_input.base_load_kw[t] - opt_input.solar_gen_kw[t]) for t in range(T))
         peak_opt = max(res_grid)
+
+        # Same cost the objective minimises: energy + daily share of the monthly demand charge
+        # (kW treated as kVA, i.e. unity power factor). Negative savings are reported, not hidden.
+        daily_demand_rate = opt_input.peak_demand_penalty_lkr_kva / 30.0
+        baseline_cost = baseline_energy_cost + peak_base * daily_demand_rate
+        opt_cost = opt_energy_cost + peak_opt * daily_demand_rate
+        energy_savings = baseline_energy_cost - opt_energy_cost
+        demand_savings = (peak_base - peak_opt) * daily_demand_rate
+        net_savings = baseline_cost - opt_cost
+        savings_pct = (net_savings / baseline_cost * 100.0) if baseline_cost > 0 else 0.0
 
         min_soc_kwh = opt_input.battery_capacity_kwh * opt_input.min_soc_ratio
         max_soc_kwh = opt_input.battery_capacity_kwh * opt_input.max_soc_ratio
@@ -211,6 +239,8 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
             optimized_cost_lkr=round(opt_cost, 2),
             net_savings_lkr=round(net_savings, 2),
             savings_percentage=round(savings_pct, 1),
+            energy_savings_lkr=round(energy_savings, 2),
+            demand_charge_savings_lkr=round(demand_savings, 2),
             peak_demand_baseline_kw=round(peak_base, 1),
             peak_demand_optimized_kw=round(peak_opt, 1),
             solver_status=solver_status,

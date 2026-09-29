@@ -1,23 +1,23 @@
 {
   "model_type": "linear_regression",
   "weights": [
-    -1.8988094448349222,
-    -16.282179823589143,
-    35.323201100365864,
-    124.31180168464343
+    -1.8988094448349344,
+    -16.28217982358916,
+    35.32320110036584,
+    124.31180168464351
   ],
-  "bias": 312.9242766203704,
+  "bias": 312.92427662037085,
   "means": [
-    -1.1326440309590808e-17,
-    -5.632777525350467e-17,
-    29.71802662037037,
+    -7.305113304391222e-17,
+    -1.1082955540962934e-16,
+    29.718026620370424,
     71.87065972222223
   ],
   "stds": [
     0.7071067811865476,
-    0.7071067811865475,
-    3.2365921319994873,
-    97.97931386115977
+    0.7071067811865476,
+    3.236592131999487,
+    97.97931386115984
   ],
   "feature_names": [
     "hour_sin",
@@ -31,11 +31,32 @@
     "n_test": 864,
     "test_rmse_kw": 37.045,
     "test_mae_kw": 24.05,
-    "baseline_test_rmse_kw": 102.047,
-    "baseline_test_mae_kw": 41.604,
-    "rmse_improvement_pct": 63.7,
-    "mae_improvement_pct": 42.2,
-    "trained_at_unix": 1789205608.9749298,
-    "data_path": "C:\\Campus Grid AI\\campusgrid-ai\\src\\pipelines\\periodic_retraining\\data\\campus_90day_dataset.csv"
+    "baseline_test_rmse_kw": 118.279,
+    "baseline_test_mae_kw": 63.332,
+    "rmse_improvement_pct": 68.7,
+    "mae_improvement_pct": 62.0,
+    "baseline": "reference baseline: previous day's same-slot reading + cooling and occupancy adjustments",
+    "trained_at_unix": 1790309029.804312,
+    "data_path": "src/pipelines/periodic_retraining/data/campus_90day_dataset.csv",
+    "feature_ranges": {
+      "outdoor_temp_c": [
+        23.3,
+        35.8
+      ],
+      "occupancy_count": [
+        0,
+        534
+      ]
+    }
+  },
+  "feature_ranges": {
+    "outdoor_temp_c": [
+      23.3,
+      35.8
+    ],
+    "occupancy_count": [
+      0,
+      534
+    ]
   }
 }

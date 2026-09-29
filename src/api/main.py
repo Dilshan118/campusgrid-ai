@@ -30,6 +30,7 @@ from src.api.routes import (
     audit_router,
     auth_router,
     campus_router,
+    mcp_router,
 )
 
 settings = get_settings()
@@ -80,4 +81,5 @@ app.include_router(rag_router)
 app.include_router(analytics_router)
 app.include_router(audit_router)
 app.include_router(campus_router)
+app.include_router(mcp_router)
 

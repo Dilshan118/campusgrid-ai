@@ -42,6 +42,8 @@ is implemented and covered by the test suite.
 
 * **Frontend:** React 18 Single Page Application, Vite, Tailwind CSS, Lucide React, Recharts.
 * **Backend Gateway:** FastAPI + Uvicorn. Each agent is reachable over its own REST endpoint.
+* **Tool protocol:** the digital-twin simulator and the weather tool are MCP tools, served as
+  JSON-RPC 2.0 over HTTP at `POST /api/mcp` (`initialize`, `ping`, `tools/list`, `tools/call`).
 * **Orchestration:** Deterministic sequential Python pipeline with typed hand-offs between
   agents. Intent parsing is rule-based today; **spaCy `en_core_web_sm` NER and LLM intent
   routing are planned.** LangGraph was evaluated and deliberately not adopted — the pipeline
@@ -53,7 +55,8 @@ is implemented and covered by the test suite.
   matching, merged with Reciprocal Rank Fusion (k=60).
 * **Mathematical Optimizer:** Deterministic Mixed-Integer Linear Programming with `PuLP` and
   the CBC solver, over 48 half-hour intervals.
-* **Physics Digital Twin:** Continuous 2-Resistance 2-Capacitance (2R2C) thermal network.
+* **Physics Digital Twin:** Continuous 2-Resistance 2-Capacitance (2R2C) thermal network with a
+  building-envelope (wall) node, per SRS §6.1; holds a requested setpoint with a simple thermostat.
 * **Pluggable LLM Manager:** LiteLLM provider factory supporting Google Gemini, OpenAI, Claude,
   Groq and Ollama — plus a deterministic mock provider for offline CI — switchable by one
   environment variable with zero code changes.
@@ -64,7 +67,8 @@ is implemented and covered by the test suite.
 
 ### Prerequisites
 * **Node.js:** v18.x or v20.x
-* **Python:** v3.10 or newer (matches `requires-python` in `pyproject.toml`)
+* **Python:** v3.11 or newer (matches `requires-python` in `pyproject.toml`; current `litellm`
+  releases cannot be imported on 3.10, so real LLM calls fail there)
 * **Git**
 
 ---
@@ -76,14 +80,16 @@ cp .env.example .env
 ```
 Open `.env` and fill in:
 1. `DATABASE_URL`: Your Neon Serverless PostgreSQL connection string (`postgresql://user:pass@ep-xyz-pooler...neon.tech/neondb?sslmode=require`).
-2. `GEMINI_API_KEY`: Your Google Gemini API key (or OpenAI / Groq key).
+2. `GEMINI_API_KEY`: Your Google Gemini API key (or OpenAI / Groq key), and set `LLM_PROVIDER` /
+   `LLM_MODEL` to match it (`LLM_PROVIDER=gemini`, `LLM_MODEL=gemini/gemini-3.5-flash`). A provider
+   that does not match the model's prefix stops startup with a clear message.
 
 ---
 
 ### Step 2: Backend Setup
 1. Create and activate a Python virtual environment:
    ```bash
-   python3 -m venv venv
+   python3.11 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 2. Install dependencies. `pyproject.toml` is the single source of dependency truth:
@@ -111,7 +117,8 @@ Open `.env` and fill in:
    > Applying `init.sql` is **required**. `init_db()` only creates the `vector` and
    > `uuid-ossp` extensions — it defines no tables, because the project has no SQLModel
    > table classes. Skipping this step leaves you with an empty schema and confusing
-   > runtime errors.
+   > runtime errors. The script also seeds the three rooms and the sample timetable, and is
+   > safe to re-run. Set `VECTOR_STORE_PROVIDER=pgvector` only together with `DATABASE_PROVIDER=postgres`.
 
 5. Start the FastAPI development server:
    ```bash
@@ -214,7 +221,7 @@ campusgrid-ai/
 │   │   ├── reference_baselines/                # Working stand-ins — FROZEN, read-only
 │   │   ├── cache/  observability/
 │   │
-│   ├── api/                                    # FastAPI gateway — 8 routers + middleware
+│   ├── api/                                    # FastAPI gateway — 11 routers (incl. /api/mcp) + middleware
 │   ├── config/settings.py                      # All provider switches — LEAD ONLY
 │   ├── prompts/                                # Externalised prompt templates
 │   ├── pipelines/periodic_retraining/          # Offline model training (Developer 1)
@@ -222,7 +229,8 @@ campusgrid-ai/
 │   └── shared/                                 # Constants, datetime helpers
 │
 ├── backend/                                    # Compatibility shims → re-export from src/
-│   └── data/                                   # init.sql schema + 48-interval seed CSV
+│   ├── data/                                   # init.sql schema + seeds, 48-interval seed CSV
+│   └── rag/corpus/tariffs/                     # the regulation documents Agent 3 indexes
 │
 ├── frontend/                                   # React 18 + Vite SPA (Team Lead)
 ├── docs/                                       # Coursework specifications & SRS

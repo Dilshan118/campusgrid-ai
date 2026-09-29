@@ -34,10 +34,14 @@ def list_audit_logs(
 @router.get("/logs/{log_id}", response_model=APIResponse)
 def get_audit_log(
     log_id: int,
+    include_details: bool = Query(default=True, description="Include the full per-agent outputs"),
     _user=Depends(require_roles(ALL_ROLES)),
     container: Container = Depends(get_app_container)
 ):
-    return APIResponse(success=True, data=container.audit_service.get_record_view(log_id))
+    return APIResponse(
+        success=True,
+        data=container.audit_service.get_record_view(log_id, include_agent_sequence=include_details),
+    )
 
 @router.get("/pending", response_model=APIResponse)
 def list_pending_recommendations(
