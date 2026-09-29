@@ -81,7 +81,7 @@ class SpyLLMProvider(LLMProvider):
 # TC-S2-01 — Raw historical meter endpoint exposure
 # ---------------------------------------------------------------------------
 
-def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
+def test_tc_s2_01_raw_historical_endpoint_now_returns_privacy_protected_readings(client):
     """TC-S2-01: Does GET /api/telemetry/historical hand out exact, un-noised sub-meter kW?"""
     response_1 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
     response_2 = client.get("/api/telemetry/historical", params={"date": "2026-09-06"})
@@ -90,34 +90,30 @@ def test_tc_s2_01_raw_historical_endpoint_exposes_unprotected_readings(client):
     body_1 = response_1.json()["data"]
     body_2 = response_2.json()["data"]
 
-    # An attacker with two calls can already tell the endpoint returns identical, exact
-    # readings every time — i.e. no differential-privacy noise is applied on this path today.
+    # If two calls return identical, exact readings, an attacker can fingerprint appliances/occupants.
     identical_readings = body_1 == body_2
-    exact_kw_present = any(isinstance(r.get("base_load_kw"), (int, float)) for r in body_1)
+    privacy_header = response_1.headers.get("x-privacy-mechanism")
 
     case = {
         "test_id": "TC-S2-01",
         "test_objective": "Determine whether raw sub-meter readings are exposed at full precision, enabling NILM-style appliance disaggregation.",
-        "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice by an unauthenticated client.",
-        "expected_behaviour": "Exported readings should carry calibrated DP noise (see get_privacy_protected_export) so repeated queries do not reveal identical exact wattage.",
+        "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice, comparing the two responses.",
+        "expected_behaviour": "Exported readings carry calibrated DP noise (get_privacy_protected_export) so repeated queries do not reveal identical exact wattage.",
         "actual_behaviour": (
             f"Endpoint returned {len(body_1)} intervals; identical across two calls: {identical_readings}; "
-            f"exact numeric base_load_kw present: {exact_kw_present}."
+            f"X-Privacy-Mechanism header: {privacy_header!r}."
         ),
-        "evidence_log": f"[TC-S2-01] first_row={body_1[0] if body_1 else None}",
+        "evidence_log": f"[TC-S2-01] first_row_call1={body_1[0] if body_1 else None} first_row_call2={body_2[0] if body_2 else None}",
         "severity_and_mitigation": (
-            "Severity: High (CVSS 7.2) — exact repeatable sub-meter data enables appliance/occupant "
-            "fingerprinting. Mitigation: route /api/telemetry/historical through "
-            "TelemetryForecastingAgent.get_privacy_protected_export() (implemented in "
-            "src/agents/telemetry/agent.py) instead of container.meter_repo directly. "
-            "This is a Team Lead file (src/api/routes/telemetry.py) — filed as a WIRE request, "
-            "not edited here."
+            "Originally High (CVSS 7.2) — the route read container.meter_repo directly, returning exact "
+            "repeatable sub-meter data. FIXED: src/api/routes/telemetry.py now calls "
+            "TelemetryForecastingAgent.get_privacy_protected_export() (src/agents/telemetry/agent.py) and "
+            "sets X-Privacy-Mechanism, so this test now verifies the mitigation rather than the original gap."
         ),
     }
     assert_schema(case)
-    # This is a genuine, currently-unmitigated finding: assert the vulnerable behaviour we found,
-    # so this test fails (as a real regression guard) the day someone fixes it without updating the report.
-    assert identical_readings and exact_kw_present
+    assert not identical_readings, "Historical endpoint is returning identical (unnoised) readings again — privacy regression."
+    assert privacy_header is not None and privacy_header.startswith("laplace"), "Privacy mechanism header missing — export path may have been bypassed."
 
 
 # ---------------------------------------------------------------------------
