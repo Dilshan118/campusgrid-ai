@@ -12,6 +12,7 @@ from src.api.routes.analytics import router as analytics_router
 from src.api.routes.audit import router as audit_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.campus import router as campus_router
+from src.api.routes.mcp import router as mcp_router
 
 __all__ = [
     "health_router",
@@ -24,5 +25,6 @@ __all__ = [
     "audit_router",
     "auth_router",
     "campus_router",
+    "mcp_router",
 ]
 

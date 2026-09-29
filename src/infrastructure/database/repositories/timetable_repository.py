@@ -4,9 +4,9 @@ Adapters for lecture schedules and expected classroom occupancy.
 
 OWNER: Member 2 (Developer 1 - Telemetry & Machine Learning)
 
-A PostgresTimetableRepository does not exist yet, so the DI container falls back to
-the in-memory seed even when DATABASE_PROVIDER=postgres. Adding it is Developer 1's
-task; the `timetables` table it should read is already defined in backend/data/init.sql.
+InMemoryTimetableRepository serves the seed teaching day; PostgresTimetableRepository reads the
+`timetables` table in backend/data/init.sql (selected by DATABASE_PROVIDER=postgres) and falls
+back to the seed day when the table has no rows for the requested weekday.
 """
 
 from typing import List, Dict, Any, Optional

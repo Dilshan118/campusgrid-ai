@@ -9,7 +9,8 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
-from src.api.routes.common import agent_response, default_planning_date
+from src.api.routes.common import agent_response, default_planning_date, default_history_date
+from src.schemas.requests import ISO_DATE_PATTERN
 
 router = APIRouter(prefix="/api/telemetry", tags=["Telemetry & Forecasting"])
 
@@ -18,10 +19,11 @@ PRIVACY_EPSILON = 1.0
 @router.get("/historical", response_model=APIResponse)
 def get_historical_telemetry(
     response: Response,
-    date: str = Query(default="2026-09-06", max_length=10),
+    date: Optional[str] = Query(default=None, pattern=ISO_DATE_PATTERN, description="Defaults to yesterday"),
     _user=Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)
 ):
+    date = default_history_date(date)
     # Leaves the backend, so it carries Laplace differential-privacy noise (Agent 1's export path),
     # never the exact sub-meter readings that enable NILM-style disaggregation.
     intervals = container.agent1_telemetry.get_privacy_protected_export(date, epsilon=PRIVACY_EPSILON)
@@ -33,7 +35,7 @@ def get_historical_telemetry(
 
 @router.get("/forecast", response_model=APIResponse)
 def get_day_ahead_forecast(
-    date: Optional[str] = Query(default=None, max_length=10),
+    date: Optional[str] = Query(default=None, pattern=ISO_DATE_PATTERN, description="Defaults to tomorrow"),
     room: str = Query(default="LH-1", max_length=20),
     _user=Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)

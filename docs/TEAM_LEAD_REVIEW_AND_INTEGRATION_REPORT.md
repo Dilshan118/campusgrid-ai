@@ -11,6 +11,43 @@ describes the dashboard to build on top of this backend.
 
 ---
 
+## 0. Update — 25 September 2026
+
+A second full review found defects that changed the numbers every plan reports. The fixes below
+are in the working tree; sections 1–7 are the 24 September report, kept for the record.
+**Tests: 248 passed** (247 passed + 1 skipped on a minimal Python 3.11 install without joblib).
+The project now requires **Python 3.11+**.
+
+### Changes made in members' files (approved by the Lead — please review and own them for the viva)
+
+| Member | What changed | What you must update |
+|---|---|---|
+| **Member 2** | Weather now really comes from Open-Meteo for dated requests (it had always fallen back offline: `forecast_days` cannot be combined with a date). Null replies fall back cleanly. The forecaster uses the campus headcount it was trained on and clips inputs to the training range (peak was 2,207 kW against a historical 860 kW; now ~915 kW). The room's own timetable, for the real weekday, goes to Agent 2. The privacy export is fixed per date so averaging repeated requests cannot remove the noise. The trainer never writes a pickle into the JSON model and compares against the real reference baseline (previous day's reading). | Report figures: model RMSE 37.0 kW vs reference baseline 118.3 kW (**68.7 %** better, was 63.7 % against a synthetic floor). TC-S2-01 now asserts "differs from the real readings **and** is the same on every call" — please rewrite its narrative in your own words; the averaging attack is a good new test case. Open: 21 of 48 intervals are flagged as anomalies because the 850 kW floor is below a normal peak (your item 6). |
+| **Member 3** | The thermal model is now the 2R2C network of SRS §6.1 (wall node with `C_wall`, `R_in`, `R_out`). Agent 2 reads the comfort limits it is sent, and with a target setpoint runs a thermostat (least cooling that holds the setpoint, up to `HVAC_MAX_COOLING_KW`). The simulation tool uses the twin the container chose, validates `dt_hours`, and is served over MCP at `POST /api/mcp` (with `ping` and notifications). | Calibration headline: guessed RMSE 0.512 °C → fitted 0.045 °C (**91.2 %** better; fitted c_in 45.16, r_vent 4.46). The wall constants are uncalibrated defaults — say so, or fit them. |
+| **Member 4** | The fact check fails closed and checks every number and clock time in the explanation against the solver output, the citations and the verified context; the LLM verdict is the second half. The solver keeps the end-of-day battery charge, reports cost as energy + daily share of the demand charge (with an energy / demand split), no longer hides negative savings, and uses the configured battery. Agent 4 reads the demand charge, the dispatch-form battery values and Agent 2's verdict, and falls back to a solver-only explanation if the LLM is down. | Savings figures in any screenshot or report are now different — re-run plans before capturing them (they also vary with the live weather). **Student 3 audit: still 2 of 15 cases, and TC-S3-01's "actual behaviour" text is not true of the old code** — the new fact check gives you real behaviour to test. |
+
+### Lead-side changes
+
+Mock LLM abstains on intent (off-topic questions no longer become dispatch plans) and writes
+explanations from the solver figures it is given · plural keywords in intent rules · internal
+error text logged, never returned · `+json` bodies sanitized · one decision per plan under
+concurrency · missing comfort verdict fails closed · corpus path independent of the working
+directory · explanation prompt carries the retrieved tariff and comfort verdict (no hard-coded
+LKR 58.00) · `LLM_PROVIDER` must match `LLM_MODEL`, default model `gemini/gemini-3.5-flash`, LLM
+timeout and retries, token usage logged · unknown vector store / cache settings stop startup ·
+`REFERENCE_BASELINE_AGENTS` empty by default · `init.sql` seeds rooms and timetable (verified on
+PostgreSQL 16, without pgvector) · `/api/auth/roles` needs a token · real calendar dates required ·
+plan review fetches the plan without every agent's output · Agent 3 wait has a timeout · dead code
+removed (`use_cases/`, unused entities and interfaces, `axios`) · `pulp<4`.
+
+### Still open
+
+Tier enforcement (D-1 to D-3) · Student 3 audit · post-solve comfort check (I-1) · live pgvector
+not yet verified · typed contracts between agents instead of dictionaries · D-4 wording (spaCy,
+TF-IDF + K-Means, mTLS, WebSockets, encrypted audit store).
+
+---
+
 ## 1. Summary
 
 - **The pipeline now works end to end and is safe to demo:** a signed-in operator asks a question,

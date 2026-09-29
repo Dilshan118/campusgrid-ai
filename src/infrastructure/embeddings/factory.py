@@ -26,9 +26,29 @@ class EmbeddingProviderFactory:
 
         if provider_name == "mock":
             return MockEmbeddingProvider(dimension=settings.dimension)
+        if provider_name in ("google", "gemini"):
+            from src.infrastructure.embeddings.google_embeddings import GoogleEmbeddingProvider
+            api_key = settings.api_key or os.getenv("GEMINI_API_KEY")
+            if not api_key or api_key.startswith("your_") or api_key == "test_key":
+                logger.warning(
+                    "GEMINI_API_KEY is not set or is a placeholder; using mock embeddings — semantic search is disabled."
+                )
+                return MockEmbeddingProvider(dimension=settings.dimension)
+            provider = GoogleEmbeddingProvider(
+                model=settings.model,
+                dimension=settings.dimension,
+                api_key=api_key,
+            )
+            try:
+                provider.warm_up()
+            except Exception as exc:
+                logger.warning("Google embedding warm-up failed (%s); using mock embeddings.", exc)
+                return MockEmbeddingProvider(dimension=settings.dimension)
+            return provider
+
         if provider_name not in ("auto", "sentence_transformers"):
             raise ValueError(
-                f"Unsupported EMBEDDING_PROVIDER '{settings.provider}'. Use 'auto', 'sentence_transformers' or 'mock'."
+                f"Unsupported EMBEDDING_PROVIDER '{settings.provider}'. Use 'auto', 'sentence_transformers', 'google', 'gemini' or 'mock'."
             )
 
         if importlib.util.find_spec("sentence_transformers") is None:

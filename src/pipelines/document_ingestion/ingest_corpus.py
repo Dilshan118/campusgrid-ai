@@ -50,7 +50,8 @@ class DocumentIngestionPipeline:
         """Ingests every supported document in the given directory."""
         target_dir = Path(dir_path)
         if not target_dir.exists() or not target_dir.is_dir():
-            return {"status": "error", "message": f"Directory not found: {dir_path}", "total_clauses_ingested": 0}
+            # Folder name only: this message reaches API clients and must not reveal server paths.
+            return {"status": "error", "message": f"Corpus directory not found: {target_dir.name}", "total_clauses_ingested": 0}
 
         files = sorted(p for p in target_dir.iterdir() if p.suffix.lower() in SUPPORTED_SUFFIXES)
         all_clauses: List[DocumentClause] = []

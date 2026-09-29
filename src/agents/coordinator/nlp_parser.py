@@ -49,9 +49,9 @@ _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 
 # Seed inventory used when no room repository is injected (mirrors InMemoryRoomRepository).
 _DEFAULT_ROOMS = {
-    "LH-1": {"room_id": "LH-1", "building_name": "Main Academic Complex", "room_type": "Lecture Hall"},
-    "AUD-1": {"room_id": "AUD-1", "building_name": "Auditorium Wing", "room_type": "Auditorium"},
-    "LAB-3": {"room_id": "LAB-3", "building_name": "Computing Building", "room_type": "Computer Lab"},
+    "LH-1": {"room_id": "LH-1", "building_name": "Main Academic Complex", "room_type": "Lecture Hall", "max_capacity": 250},
+    "AUD-1": {"room_id": "AUD-1", "building_name": "Auditorium Wing", "room_type": "Auditorium", "max_capacity": 600},
+    "LAB-3": {"room_id": "LAB-3", "building_name": "Computing Building", "room_type": "Computer Lab", "max_capacity": 80},
 }
 _EXTRA_ALIASES = {
     "AUD-1": ["auditorium", "main auditorium"],
@@ -59,8 +59,15 @@ _EXTRA_ALIASES = {
 }
 
 
+def _keyword_pattern(word: str) -> str:
+    """Whole-word match that also accepts the plural ("rate" -> "rates", "battery" -> "batteries")."""
+    if word.endswith("y"):
+        return re.escape(word[:-1]) + r"(?:y|ies)"
+    return re.escape(word) + r"(?:e?s)?"
+
+
 def _contains_any(text: str, words: List[str]) -> bool:
-    return any(re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", text) for w in words)
+    return any(re.search(r"(?<![a-z])" + _keyword_pattern(w) + r"(?![a-z])", text) for w in words)
 
 
 class NLPQueryParser:

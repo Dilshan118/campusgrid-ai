@@ -12,6 +12,7 @@ import random
 import time
 import urllib.request
 import urllib.error
+from datetime import date
 from typing import Dict, Any, List, Optional
 from src.domain.interfaces.tool import Tool, ToolResult
 
@@ -60,6 +61,14 @@ class WeatherTool(Tool):
     def execute(self, **kwargs) -> ToolResult:
         start_time = time.time()
         date_str: Optional[str] = kwargs.get("date")
+        # This tool is reachable by MCP clients (POST /api/mcp); the date goes into the request URL
+        # and the cache key, so anything but a real YYYY-MM-DD date is rejected at the boundary.
+        if date_str is not None:
+            try:
+                date_str = date.fromisoformat(str(date_str)).isoformat()
+            except ValueError:
+                return ToolResult(success=False, data=None, error="date must be YYYY-MM-DD",
+                                  execution_time_ms=(time.time() - start_time) * 1000.0)
         cache_key = date_str or "today"
 
         cached = self._get_cached(cache_key)
@@ -86,18 +95,23 @@ class WeatherTool(Tool):
         url = (
             f"{OPEN_METEO_BASE_URL}"
             f"?latitude={self.latitude}&longitude={self.longitude}"
-            f"&hourly=temperature_2m&forecast_days=2&timezone=auto"
+            f"&hourly=temperature_2m&timezone=auto"
         )
+        # Open-Meteo rejects forecast_days together with start_date/end_date (HTTP 400), which
+        # silently sent every dated request to the offline fallback curve.
         if date_str:
             url += f"&start_date={date_str}&end_date={date_str}"
+        else:
+            url += "&forecast_days=2"
 
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "CampusGridAI/4.2"})
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             hourly_temps = payload["hourly"]["temperature_2m"][:24]
-            if len(hourly_temps) < 24:
-                raise ValueError("Open-Meteo returned fewer than 24 hourly readings")
+            # Past dates inside the allowed window come back as 24 nulls from the forecast endpoint.
+            if len(hourly_temps) < 24 or any(t is None for t in hourly_temps):
+                raise ValueError("Open-Meteo returned fewer than 24 usable hourly readings")
             # Interpolate 24 hourly readings into 48 half-hourly slots.
             half_hourly = self._upsample_hourly_to_half_hourly(hourly_temps)
             return half_hourly, "open-meteo"
