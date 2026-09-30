@@ -5,7 +5,8 @@ Pydantic DTOs for client request payloads.
 
 from datetime import date
 from typing import Annotated, List, Optional
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, field_validator
+from src.shared.datetime_utils import campus_today
 
 class OperatorQueryRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=2000, description="Natural-language operator query")
@@ -44,7 +45,25 @@ class WhatIfSimulationRequest(BaseModel):
     ambient_temp_delta_c: float = Field(default=0.0, ge=-10.0, le=15.0)
     occupancy_multiplier: float = Field(default=1.0, ge=0.0, le=5.0)
     date: Optional[IsoDate] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Weather date; defaults to tomorrow")
-    room: str = Field(default="LH-1", max_length=20, description="Room whose capacity bounds the simulated occupancy")
+    room: str = Field(default="LH-1", max_length=20, description="Listed room to simulate (ignored when room_type is given)")
+    room_type: Optional[str] = Field(
+        default=None, max_length=40,
+        description="Custom (unlisted) room: its venue type, e.g. 'lecture_hall', 'study_area' — see "
+                     "GET /api/simulation/venues. When given, `room` is ignored."
+    )
+    seating_capacity: Optional[int] = Field(default=None, ge=1, le=2000, description="Custom room only")
+    num_acs: Optional[int] = Field(default=None, ge=1, le=50, description="Custom room only")
+    precool_minutes: int = Field(
+        default=0, ge=0, le=180, multiple_of=30,
+        description="Start the ACs this long before the room opens (0, 30, 60 ... 180)."
+    )
+
+    @field_validator("date")
+    @classmethod
+    def not_in_the_past(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and date.fromisoformat(value) < campus_today():
+            raise ValueError("must be today or a later date — a what-if simulation looks ahead, not back")
+        return value
 
 class OptimizationRunRequest(BaseModel):
     battery_capacity_kwh: float = Field(default=500.0, gt=0, le=10_000)

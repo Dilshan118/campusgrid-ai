@@ -11,7 +11,14 @@ from src.agents.digital_twin.thermal_model import BuildingThermalTwin
 from src.domain.interfaces.tool import Tool
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface, BatteryDynamicsInterface
 from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
-from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C, BATTERY_CAPACITY_DEFAULT_KWH
+from src.agents.digital_twin.room_presets import resolve_room_config
+from src.agents.digital_twin.energy_cost import estimate_hvac_energy
+from src.shared.constants import (
+    COMFORT_TEMP_MIN_C,
+    COMFORT_TEMP_MAX_C,
+    COMFORT_SETPOINT_DEFAULT_C,
+    BATTERY_CAPACITY_DEFAULT_KWH,
+)
 
 # Rated cooling one zone can draw when a setpoint is controlled (kW thermal). Settings override it.
 DEFAULT_HVAC_MAX_COOLING_KW = 35.0
@@ -57,43 +64,123 @@ class DigitalTwinAgent(BaseAgent):
         solar_scaling_factor = float(input_data.get("perturb_solar_scaling_factor", 1.0))
 
         perturbed_ambients = [round(t + temp_delta, 2) for t in ambient_temps]
-        perturbed_occupants = [int(o * occ_multiplier) for o in occupants]
+        n_intervals = len(perturbed_ambients)
         setpoint = input_data.get("target_setpoint_c")
+
+        # Operating hours (see operating_hours.py): True where the room is open. When given,
+        # people, equipment and ACs are only present while it is open, and comfort is only
+        # judged while it is occupied — an empty room drifting warm overnight is not a
+        # comfort violation.
+        occupied_mask: Optional[List[bool]] = input_data.get("occupied_mask")
+        if occupied_mask is not None:
+            occupied_mask = ([bool(m) for m in occupied_mask] + [False] * n_intervals)[:n_intervals]
+
+        # Pre-cooling: the ACs may start this many half-hours before each opening, pulling
+        # heat out of the room's structure before people arrive. Comfort is still judged
+        # only while the room is occupied.
+        precool_intervals = max(0, int(input_data.get("precool_intervals") or 0))
+        ac_mask: Optional[List[bool]] = None
+        if occupied_mask is not None:
+            ac_mask = list(occupied_mask)
+            for i, open_ in enumerate(occupied_mask):
+                if open_ and (i == 0 or not occupied_mask[i - 1]):
+                    for j in range(max(0, i - precool_intervals), i):
+                        ac_mask[j] = True
+
+        # Room configuration: a venue type + seating capacity + AC count, either a room
+        # listed in the campus inventory or a custom one (see room_presets.py). Opt-in —
+        # omitting all three keeps every existing caller on the injected thermal_twin
+        # (the calibrated building constants, or its reference baseline), unchanged.
+        room_config = None
+        room_type = input_data.get("room_type")
+        seating_capacity = input_data.get("seating_capacity")
+        num_acs = input_data.get("num_acs")
+        # `extra_heat_kw` is only accepted by MY BuildingThermalTwin (thermal_model.py),
+        # not by BuildingThermalTwinInterface generally — the reference baseline predates
+        # it and does not take this kwarg. It is only ever passed to a twin THIS method
+        # constructs itself (the room-config branch below), never to an injected
+        # self.thermal_twin, which might be the baseline.
+        active_extra_heat_kw: Optional[List[float]] = None
+        if room_type or seating_capacity or num_acs:
+            room_config = resolve_room_config(room_type, seating_capacity, num_acs)
+            active_thermal_twin = BuildingThermalTwin(
+                c_in=room_config.c_in, r_vent=room_config.r_vent,
+                c_wall=room_config.c_wall, r_in=room_config.r_in, r_out=room_config.r_out,
+            )
+            active_hvac_ceiling_kw = room_config.total_hvac_capacity_kw
+            if occupied_mask is not None:
+                active_extra_heat_kw = [room_config.equipment_heat_kw if occ else 0.0 for occ in occupied_mask]
+            else:
+                active_extra_heat_kw = [room_config.equipment_heat_kw] * n_intervals
+            # Supplied headcounts (e.g. building-wide meter counts) are capped at the room's
+            # seats; otherwise the room is full while open. The occupancy multiplier applies
+            # after the cap, so a "crowd surge" can still push a room past its seat count.
+            if occupants:
+                base_occupants = [min(o, room_config.capacity) for o in occupants]
+            elif occupied_mask is not None:
+                base_occupants = [room_config.capacity if occ else 0 for occ in occupied_mask]
+            else:
+                base_occupants = [room_config.capacity] * n_intervals
+        else:
+            active_thermal_twin = self.thermal_twin
+            active_hvac_ceiling_kw = self.hvac_max_cooling_kw
+            base_occupants = occupants
+        perturbed_occupants = [int(o * occ_multiplier) for o in base_occupants]
 
         if hvac_proposal:
             hvac_mode = "supplied"
             hvac_proposal = [round(p * solar_scaling_factor, 2) for p in hvac_proposal]
-        elif setpoint is not None:
-            # Thermostat: cool towards the requested setpoint, within the (derated) plant capacity.
-            hvac_mode = "thermostat"
+        elif setpoint is not None or occupied_mask is not None:
+            # Thermostat: cool towards the setpoint within the (derated) plant capacity — and,
+            # when operating hours are known, only while the room is open (ACs off otherwise).
+            hvac_mode = "occupied_thermostat" if occupied_mask is not None else "thermostat"
+            if setpoint is None:
+                setpoint = COMFORT_SETPOINT_DEFAULT_C
+            ceiling_kw = active_hvac_ceiling_kw * solar_scaling_factor
             hvac_proposal = self._thermostat_schedule(
-                initial_temp, perturbed_ambients, perturbed_occupants, float(setpoint),
-                self.hvac_max_cooling_kw * solar_scaling_factor,
+                initial_temp, perturbed_ambients, perturbed_occupants, float(setpoint), ceiling_kw,
+                thermal_twin=active_thermal_twin, extra_heat_kw=active_extra_heat_kw,
+                max_cooling_by_interval=(
+                    [ceiling_kw if on else 0.0 for on in ac_mask] if ac_mask is not None else None
+                ),
             )
         else:
-            # No plan and no setpoint: standard office-hours cooling curve.
+            # No plan and no setpoint: standard office-hours cooling curve, capped at
+            # whatever plant capacity is actually available (the room's ACs, if given).
             hvac_mode = "default_schedule"
             hvac_proposal = [
-                round((35.0 if (8 <= (i // 2) <= 17) else 5.0) * solar_scaling_factor, 2)
-                for i in range(len(perturbed_ambients))
+                round(min(35.0, active_hvac_ceiling_kw) * solar_scaling_factor, 2)
+                if (8 <= (i // 2) <= 17) else round(min(5.0, active_hvac_ceiling_kw) * solar_scaling_factor, 2)
+                for i in range(n_intervals)
             ]
 
         # Run 2R2C continuous thermal model
-        indoor_temps = self.thermal_twin.simulate(
+        sim_kwargs: Dict[str, Any] = {}
+        if active_extra_heat_kw is not None:
+            sim_kwargs["extra_heat_kw"] = active_extra_heat_kw
+        indoor_temps = active_thermal_twin.simulate(
             initial_temp_c=initial_temp,
             ambient_temps=perturbed_ambients,
             occupant_counts=perturbed_occupants,
-            hvac_power_kw=hvac_proposal
+            hvac_power_kw=hvac_proposal,
+            **sim_kwargs,
         )
 
         comfort_min = float(input_data.get("comfort_min_c", self.comfort_min_c))
         comfort_max = float(input_data.get("comfort_max_c", self.comfort_max_c))
-        comfort_violations = 0
+        too_hot = too_cold = assessed = 0
         max_deviation_c = 0.0
-        for t in indoor_temps:
-            if t < comfort_min or t > comfort_max:
-                comfort_violations += 1
-                max_deviation_c = max(max_deviation_c, comfort_min - t, t - comfort_max)
+        for i, t in enumerate(indoor_temps):
+            if occupied_mask is not None and not occupied_mask[i]:
+                continue
+            assessed += 1
+            if t > comfort_max:
+                too_hot += 1
+                max_deviation_c = max(max_deviation_c, t - comfort_max)
+            elif t < comfort_min:
+                too_cold += 1
+                max_deviation_c = max(max_deviation_c, comfort_min - t)
+        comfort_violations = too_hot + too_cold
         is_feasible = (comfort_violations == 0)
 
         # Battery safety check. Callers that only care about thermal feasibility (e.g.
@@ -104,8 +191,8 @@ class DigitalTwinAgent(BaseAgent):
         battery_initial_soc_kwh = float(
             input_data.get("battery_initial_soc_kwh", battery_capacity_kwh * 0.5)
         )
-        battery_charge_kw = input_data.get("battery_charge_kw", [0.0] * len(perturbed_ambients))
-        battery_discharge_kw = input_data.get("battery_discharge_kw", [0.0] * len(perturbed_ambients))
+        battery_charge_kw = input_data.get("battery_charge_kw", [0.0] * n_intervals)
+        battery_discharge_kw = input_data.get("battery_discharge_kw", [0.0] * n_intervals)
 
         battery_soc_trajectory_kwh, battery_soc_violations_count = self.battery_dynamics.simulate_soc_trajectory(
             initial_soc_kwh=battery_initial_soc_kwh,
@@ -123,6 +210,14 @@ class DigitalTwinAgent(BaseAgent):
             "hvac_mode": hvac_mode,
             "target_setpoint_c": setpoint,
             "comfort_violations_count": comfort_violations,
+            "comfort_violations_hot": too_hot,
+            "comfort_violations_cold": too_cold,
+            "assessed_intervals_count": assessed,
+            "occupied_mask": occupied_mask,
+            "precool_intervals": precool_intervals,
+            # What running the ACs costs — reported for a room simulation, where the AC
+            # count is known; the building-level planning pipeline prices energy in Agent 4.
+            "hvac_energy": estimate_hvac_energy(hvac_proposal) if room_config is not None else None,
             "is_thermal_feasible": is_feasible,
             "max_temp_deviation_c": round(max_deviation_c, 2),
             "comfort_limits": {"min_c": comfort_min, "max_c": comfort_max},
@@ -133,7 +228,24 @@ class DigitalTwinAgent(BaseAgent):
                 "temp_delta_c": temp_delta,
                 "occupancy_multiplier": occ_multiplier,
                 "solar_scaling_factor": solar_scaling_factor
-            }
+            },
+            "room_config": (
+                {
+                    "room_type": room_config.room_type,
+                    "label": room_config.label,
+                    "capacity": room_config.capacity,
+                    "num_acs": room_config.num_acs,
+                    "ac_unit_cooling_kw": room_config.ac_unit_cooling_kw,
+                    "total_hvac_capacity_kw": room_config.total_hvac_capacity_kw,
+                    "equipment_heat_kw": room_config.equipment_heat_kw,
+                    "c_in": room_config.c_in,
+                    "r_vent": room_config.r_vent,
+                    "c_wall": room_config.c_wall,
+                    "r_in": room_config.r_in,
+                    "r_out": room_config.r_out,
+                }
+                if room_config is not None else None
+            ),
         }
 
     def _thermostat_schedule(
@@ -143,30 +255,46 @@ class DigitalTwinAgent(BaseAgent):
         occupants: List[int],
         setpoint: float,
         max_cooling_kw: float,
+        thermal_twin: Optional[BuildingThermalTwinInterface] = None,
+        extra_heat_kw: Optional[List[float]] = None,
+        max_cooling_by_interval: Optional[List[float]] = None,
     ) -> List[float]:
         """Per interval, the least cooling that keeps the room at or below the setpoint.
 
-        Found by bisection on the injected twin (member or baseline), re-simulating the whole
-        prefix each time so any hidden state (e.g. the 2R2C wall temperature) carries over.
-        Where even full capacity cannot hold the setpoint, the plant runs flat out.
+        Found by bisection on the active twin (injected member/baseline, or a per-request
+        twin built from a room preset), re-simulating the whole prefix each time so any
+        hidden state (e.g. the 2R2C wall temperature) carries over. Where even full
+        capacity cannot hold the setpoint, the plant runs flat out. `max_cooling_by_interval`
+        overrides the capacity per interval — 0 means the ACs are off (room closed).
         """
+        twin = thermal_twin or self.thermal_twin
+        sim_kwargs: Dict[str, Any] = {}
+
         schedule: List[float] = []
         for t in range(len(ambients)):
+            cap_kw = max_cooling_by_interval[t] if max_cooling_by_interval is not None else max_cooling_kw
+            if cap_kw <= 0:
+                schedule.append(0.0)
+                continue
+
             def end_temp(q_kw: float) -> float:
-                return self.thermal_twin.simulate(
+                if extra_heat_kw is not None:
+                    sim_kwargs["extra_heat_kw"] = extra_heat_kw[: t + 1]
+                return twin.simulate(
                     initial_temp_c=initial_temp,
                     ambient_temps=ambients[: t + 1],
                     occupant_counts=occupants[: t + 1],
                     hvac_power_kw=schedule + [q_kw],
+                    **sim_kwargs,
                 )[-1]
 
             if end_temp(0.0) <= setpoint:
                 schedule.append(0.0)
                 continue
-            if end_temp(max_cooling_kw) > setpoint:
-                schedule.append(round(max_cooling_kw, 2))
+            if end_temp(cap_kw) > setpoint:
+                schedule.append(round(cap_kw, 2))
                 continue
-            low, high = 0.0, max_cooling_kw
+            low, high = 0.0, cap_kw
             for _ in range(_THERMOSTAT_BISECTION_STEPS):
                 mid = (low + high) / 2.0
                 if end_temp(mid) > setpoint:
@@ -185,6 +313,11 @@ class DigitalTwinAgent(BaseAgent):
         battery_initial_soc_kwh: Optional[float] = None,
         battery_charge_kw: Optional[List[float]] = None,
         battery_discharge_kw: Optional[List[float]] = None,
+        room_type: Optional[str] = None,
+        seating_capacity: Optional[int] = None,
+        num_acs: Optional[int] = None,
+        occupied_mask: Optional[List[bool]] = None,
+        precool_intervals: Optional[int] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Runs the three required what-if scenarios against one baseline forecast:
         a heatwave, a crowd surge, and a solar dropout. Each result reports whether the
@@ -196,12 +329,17 @@ class DigitalTwinAgent(BaseAgent):
             "occupancy_counts": occupancy_counts,
             "hvac_power_kw": hvac_power_kw or [],
         }
-        if battery_initial_soc_kwh is not None:
-            baseline["battery_initial_soc_kwh"] = battery_initial_soc_kwh
-        if battery_charge_kw is not None:
-            baseline["battery_charge_kw"] = battery_charge_kw
-        if battery_discharge_kw is not None:
-            baseline["battery_discharge_kw"] = battery_discharge_kw
+        optional = {
+            "battery_initial_soc_kwh": battery_initial_soc_kwh,
+            "battery_charge_kw": battery_charge_kw,
+            "battery_discharge_kw": battery_discharge_kw,
+            "room_type": room_type,
+            "seating_capacity": seating_capacity,
+            "num_acs": num_acs,
+            "occupied_mask": occupied_mask,
+            "precool_intervals": precool_intervals,
+        }
+        baseline.update({k: v for k, v in optional.items() if v is not None})
 
         scenarios = {
             "heatwave": {**baseline, "perturb_temp_delta_c": 4.0},
