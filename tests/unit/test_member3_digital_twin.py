@@ -11,6 +11,7 @@ from src.agents.digital_twin.battery_dynamics import BatteryDynamicsModel
 from src.agents.digital_twin.thermal_calibration import (
     fit_thermal_constants,
     generate_synthetic_reference_dataset,
+    calibration_solar_gain_kw,
 )
 from src.infrastructure.tools.simulation_tool import SimulationTool
 from src.agents.digital_twin.agent import DigitalTwinAgent
@@ -86,6 +87,7 @@ def test_member3_fitted_constants_beat_guessed_constants():
         occupant_counts=occupants,
         hvac_power_kw=hvac,
         measured_indoor_temps_c=measured,
+        solar_gain_kw=calibration_solar_gain_kw(len(ambient)),
     )
     assert report.rmse_fitted < report.rmse_guessed
     assert report.accuracy_improvement_pct > 50.0
@@ -147,7 +149,9 @@ def test_member3_what_if_scenarios():
     assert set(results.keys()) == {"heatwave", "crowd_surge", "solar_dropout"}
     assert results["heatwave"]["ambient_temperatures_c"] == [29.0] * 10
     assert results["crowd_surge"]["occupancy_counts"] == [100] * 10
-    assert results["solar_dropout"]["hvac_power_kw"] == [4.0] * 10
+    # A solar dropout halves the sunshine, not the air-conditioning.
+    assert results["solar_dropout"]["hvac_power_kw"] == hvac
+    assert results["solar_dropout"]["perturbation_applied"]["solar_scaling_factor"] == 0.5
 
     baseline = agent.execute({
         "initial_temp_c": 24.0,
@@ -156,10 +160,8 @@ def test_member3_what_if_scenarios():
         "hvac_power_kw": hvac,
     }).data
 
-    # Less cooling headroom (hotter outside, or less HVAC power) must not leave the
-    # building any cooler than the unperturbed baseline plan.
+    # Hotter outside must not leave the building any cooler than the unperturbed plan.
     assert results["heatwave"]["simulated_indoor_temps_c"][-1] >= baseline["simulated_indoor_temps_c"][-1]
-    assert results["solar_dropout"]["simulated_indoor_temps_c"][-1] >= baseline["simulated_indoor_temps_c"][-1]
 
     for scenario_result in results.values():
         assert "is_thermal_feasible" in scenario_result
@@ -587,3 +589,219 @@ def test_member3_what_if_precool_option(client):
     data = resp.json()["data"]
     assert data["precool_intervals"] == 2
     assert data["hvac_energy"]["cost_lkr"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Review follow-up: series-length validation, solar gain, solar dropout,
+# post-solve plan verification and MCP message integrity.
+# ---------------------------------------------------------------------------
+
+from src.agents.digital_twin.validation import SeriesLengthMismatchError
+from src.agents.digital_twin.solar import clear_sky_irradiance_kw_m2, typical_irradiance_kw_m2
+from src.agents.digital_twin.energy_cost import estimate_solar_shortfall
+from src.agents.digital_twin.thermal_calibration import load_ambient_temperatures
+from src.agents.digital_twin.mcp_integrity import MessageIntegrityGuard, sign_request
+from src.agents.digital_twin.mcp_server import UNAUTHORIZED
+
+_WEEKDAY = date(2026, 10, 1)
+
+
+def _lecture_hall_day(**overrides):
+    ambients = load_ambient_temperatures()
+    return {
+        "initial_temp_c": 24.0,
+        "ambient_temperatures_c": ambients,
+        "room_type": "lecture_hall",
+        "seating_capacity": 100,
+        "occupied_mask": occupied_mask(operating_hours_for(_WEEKDAY), len(ambients)),
+        "date": _WEEKDAY.isoformat(),
+        **overrides,
+    }
+
+
+def test_member3_thermal_model_rejects_mismatched_series():
+    with pytest.raises(SeriesLengthMismatchError):
+        BuildingThermalTwin().simulate(24.0, [30.0] * 3, [10] * 2, [0.0] * 3)
+    with pytest.raises(SeriesLengthMismatchError):
+        BuildingThermalTwin().simulate(24.0, [30.0] * 3, [10] * 3, [0.0] * 3, solar_gain_kw=[1.0] * 2)
+
+
+def test_member3_battery_rejects_mismatched_plans():
+    with pytest.raises(SeriesLengthMismatchError):
+        BatteryDynamicsModel().simulate_soc_trajectory(250.0, [10.0] * 48, [0.0] * 47)
+
+
+def test_member3_agent_fails_cleanly_on_mismatched_series():
+    """The agent must refuse a short occupancy or battery plan with a readable error,
+    not simulate a truncated day."""
+    agent = DigitalTwinAgent()
+    short_occ = agent.execute({"ambient_temperatures_c": [28.0] * 48, "occupancy_counts": [50] * 24})
+    short_battery = agent.execute({
+        "ambient_temperatures_c": [28.0] * 48, "occupancy_counts": [50] * 48,
+        "battery_charge_kw": [0.0] * 47, "battery_discharge_kw": [0.0] * 47,
+    })
+    for res in (short_occ, short_battery):
+        assert res.success is False
+        assert "SERIES_LENGTH_MISMATCH" in res.error
+
+
+def test_member3_irradiance_follows_the_sun():
+    g = clear_sky_irradiance_kw_m2(_WEEKDAY)
+    assert len(g) == 48
+    assert all(v == 0.0 for v in g[:10]) and all(v == 0.0 for v in g[40:]), "No sun before 05:00 or after 20:00"
+    peak = max(range(48), key=lambda i: g[i])
+    assert 22 <= peak <= 25, "Peak near solar noon (~12:10 in Colombo)"
+    assert 0.9 < g[peak] < 1.1, "Near-overhead tropical sun, clear sky"
+    typical = typical_irradiance_kw_m2(_WEEKDAY)
+    assert max(typical) < g[peak]
+
+
+def test_member3_solar_gain_warms_a_room_and_costs_cooling():
+    agent = DigitalTwinAgent()
+    sunny = agent.execute(_lecture_hall_day()).data
+    dark = agent.execute(_lecture_hall_day(solar_irradiance_kw_m2=[0.0] * 48)).data
+    assert max(sunny["solar_gain_kw"]) > 1.0
+    assert sunny["room_config"]["solar_aperture_m2"] > 0
+    assert sunny["hvac_energy"]["electricity_kwh"] > dark["hvac_energy"]["electricity_kwh"]
+
+
+def test_member3_solar_dropout_cuts_sunshine_not_air_conditioning():
+    """Review finding: the dropout used to derate the ACs. It must now reduce PV generation
+    and solar heat gain, and leave the AC capacity untouched."""
+    agent = DigitalTwinAgent()
+    solar = [0.0] * 12 + [200.0] * 24 + [0.0] * 12
+    demand = [300.0] * 48
+    results = agent.run_what_if_scenarios(
+        initial_temp_c=24.0,
+        ambient_temperatures_c=load_ambient_temperatures(),
+        occupancy_counts=[],
+        room_type="lecture_hall", seating_capacity=100,
+        occupied_mask=occupied_mask(operating_hours_for(_WEEKDAY), 48),
+        simulation_date=_WEEKDAY, forecast_solar_kw=solar, forecast_demand_kw=demand,
+    )
+    baseline = agent.execute(_lecture_hall_day(forecast_solar_kw=solar, forecast_demand_kw=demand)).data
+    dropout = results["solar_dropout"]
+
+    assert dropout["room_config"]["total_hvac_capacity_kw"] == baseline["room_config"]["total_hvac_capacity_kw"]
+    assert max(dropout["hvac_power_kw"]) <= dropout["room_config"]["total_hvac_capacity_kw"]
+    assert sum(dropout["solar_gain_kw"]) == pytest.approx(0.5 * sum(baseline["solar_gain_kw"]), rel=0.01)
+
+    supply = dropout["solar_supply"]
+    assert supply["forecast_solar_kw"] == [s * 0.5 for s in solar]
+    assert supply["pv_energy_lost_kwh"] == pytest.approx(0.5 * sum(solar) * 0.5)
+    assert supply["extra_grid_import_kwh"] == pytest.approx(supply["pv_energy_lost_kwh"])
+    assert supply["extra_grid_cost_lkr"] > 0
+    assert baseline["solar_supply"]["pv_energy_lost_kwh"] == 0
+
+
+def test_member3_solar_shortfall_only_counts_demand_actually_unmet():
+    """PV beyond demand was never offsetting anything, so losing it costs no extra import."""
+    out = estimate_solar_shortfall([100.0, 100.0], 0.5, forecast_demand_kw=[20.0, 20.0])
+    assert out["pv_energy_lost_kwh"] == 50.0
+    assert out["extra_grid_import_kwh"] == 0.0
+
+
+def _plan(n=48, charge=0.0, discharge=0.0, **battery):
+    return {
+        "solver_output": {"battery_charge_kw": [charge] * n, "battery_discharge_kw": [discharge] * n},
+        "battery_parameters": {"battery_capacity_kwh": 500.0, "max_charge_rate_kw": 100.0,
+                               "max_discharge_rate_kw": 100.0, "initial_soc_ratio": 0.5, **battery},
+    }
+
+
+def test_member3_verify_plan_accepts_a_feasible_plan():
+    check = DigitalTwinAgent().verify_dispatch_plan(_lecture_hall_day(), _plan())
+    assert check["verdict"] == "accept", check["reasons"]
+    assert check["checks"]["battery_soc_violations"] == 0
+
+
+def test_member3_verify_plan_sends_battery_breaches_back_to_the_optimizer():
+    plan = _plan()
+    plan["solver_output"]["battery_charge_kw"][3] = 150.0      # above the 100 kW limit
+    plan["solver_output"]["battery_discharge_kw"][3] = 20.0    # and at the same time as charging
+    plan["solver_output"]["battery_discharge_kw"][30:48] = [100.0] * 18  # drains below 20% SOC
+    check = DigitalTwinAgent().verify_dispatch_plan(_lecture_hall_day(), plan)
+    assert check["verdict"] == "re_optimize"
+    assert check["checks"]["charge_limit_breaches"] == 1
+    assert check["checks"]["simultaneous_charge_discharge"] == 1
+    assert check["checks"]["battery_soc_violations"] > 0
+
+
+def test_member3_verify_plan_rejects_a_day_no_plan_can_keep_comfortable():
+    day = _lecture_hall_day(num_acs=1, perturb_temp_delta_c=8.0)
+    check = DigitalTwinAgent().verify_dispatch_plan(day, _plan())
+    assert check["verdict"] == "reject"
+    assert check["checks"]["comfort_fixable_by_hvac"] is False
+
+
+def test_member3_verify_plan_rejects_a_plan_of_the_wrong_length():
+    check = DigitalTwinAgent().verify_dispatch_plan(_lecture_hall_day(), _plan(n=24))
+    assert check["verdict"] == "reject"
+    assert "SERIES_LENGTH_MISMATCH" in check["reasons"][0]
+
+
+def test_member3_verify_plan_flags_solver_soc_disagreement():
+    plan = _plan()
+    plan["solver_output"]["battery_soc_kwh"] = [400.0] * 48  # the idle battery stays at 250
+    check = DigitalTwinAgent().verify_dispatch_plan(_lecture_hall_day(), plan)
+    assert check["verdict"] == "re_optimize"
+    assert check["checks"]["max_soc_gap_vs_solver_kwh"] == 150.0
+
+
+_KEYS = {"agent2": "unit-test-secret"}
+_LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+def test_member3_integrity_rejects_stale_and_future_messages():
+    now = [1_000_000.0]
+    server = create_digital_twin_mcp_server(MessageIntegrityGuard(_KEYS, clock=lambda: now[0]))
+    stale = sign_request(_LIST, "agent2", _KEYS["agent2"], timestamp=int(now[0]) - 301)
+    future = sign_request(_LIST, "agent2", _KEYS["agent2"], timestamp=int(now[0]) + 301)
+    fresh = sign_request(_LIST, "agent2", _KEYS["agent2"], timestamp=int(now[0]) - 299)
+    assert "window" in server.handle_request(stale)["error"]["message"]
+    assert "window" in server.handle_request(future)["error"]["message"]
+    assert "result" in server.handle_request(fresh)
+
+
+def test_member3_integrity_rejects_wrong_or_unknown_keys():
+    server = create_digital_twin_mcp_server(MessageIntegrityGuard(_KEYS))
+    forged = sign_request(_LIST, "agent2", "guessed-secret")
+    unknown = sign_request(_LIST, "intruder", "whatever")
+    assert server.handle_request(forged)["error"]["code"] == UNAUTHORIZED
+    assert "unknown signing key" in server.handle_request(unknown)["error"]["message"]
+
+
+def test_member3_integrity_rejects_a_tampered_method_and_malformed_blocks():
+    server = create_digital_twin_mcp_server(MessageIntegrityGuard(_KEYS))
+    signed = sign_request(_LIST, "agent2", _KEYS["agent2"])
+    signed["method"] = "tools/call"
+    assert server.handle_request(signed)["error"]["code"] == UNAUTHORIZED
+
+    malformed = sign_request(_LIST, "agent2", _KEYS["agent2"])
+    malformed["params"]["_meta"]["campusgrid/integrity"]["timestamp"] = "yesterday"
+    assert "malformed" in server.handle_request(malformed)["error"]["message"]
+
+
+def test_member3_integrity_forgets_nonces_only_after_they_expire():
+    now = [1_000_000.0]
+    guard = MessageIntegrityGuard(_KEYS, clock=lambda: now[0])
+    msg = sign_request(_LIST, "agent2", _KEYS["agent2"], timestamp=int(now[0]), nonce="n-1")
+    assert guard.verify(msg) is None
+    now[0] += 200
+    assert "replay" in guard.verify(msg)
+    now[0] += 200  # past the window: the nonce is forgotten, but the timestamp now fails instead
+    assert "window" in guard.verify(msg)
+
+
+def test_member3_integrity_fails_closed_when_the_nonce_table_is_full():
+    guard = MessageIntegrityGuard(_KEYS, max_tracked_nonces=2)
+    for i in range(2):
+        assert guard.verify(sign_request(_LIST, "agent2", _KEYS["agent2"], nonce=f"n{i}")) is None
+    assert "too many" in guard.verify(sign_request(_LIST, "agent2", _KEYS["agent2"], nonce="n2"))
+
+
+def test_member3_unsigned_notification_is_dropped_silently_when_signing_is_required():
+    server = create_digital_twin_mcp_server(MessageIntegrityGuard(_KEYS))
+    assert server.handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    assert server.requires_signed_messages is True
+    assert create_digital_twin_mcp_server().requires_signed_messages is False
