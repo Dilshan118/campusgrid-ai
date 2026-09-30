@@ -1,0 +1,24 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\ASUS\Desktop\campusgrid-ai\campusgrid-ai\venv\Scripts\python.exe
+rootdir: C:\Users\ASUS\Desktop\campusgrid-ai\campusgrid-ai
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 15 items
+
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_01_extreme_poison_is_blocked_by_clause_screening PASSED [  6%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_02_plausible_range_poison_bypasses_screening PASSED [ 13%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_03_semantic_near_collision_via_hybrid_search PASSED [ 20%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_04_vector_cluster_manipulation PASSED [ 26%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_05_vector_store_oversized_query_vector_dos PASSED [ 33%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_06_vector_store_dimension_mismatch_fails_open PASSED [ 40%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_07_mcp_extreme_temperature_spoofing PASSED [ 46%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_08_mcp_extreme_power_spoofing PASSED [ 53%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_09_mcp_negative_occupancy_spoofing PASSED [ 60%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_10_mcp_array_length_desynchronization PASSED [ 66%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_11_mcp_nan_infinity_injection PASSED [ 73%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_12_mcp_type_confusion_injection PASSED [ 80%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_13_mcp_resource_exhaustion_oversized_horizon PASSED [ 86%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_14_unencrypted_tool_call_interception PASSED [ 93%]
+tests/red_team_security_audits/test_student4_retrieval_mcp_security.py::test_tc_s4_15_payload_tampering_and_replay PASSED [100%]
+
+============================= 15 passed in 0.22s ==============================

@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-08",
+  "test_objective": "Verify the tool rejects an HVAC power command far beyond any real chiller plant's rated capacity.",
+  "attack_scenario": "MCP tools/call: simulate_building_thermal_dynamics(hvac_power_kw=[5000.0]) against a campus zone rated for at most ~1000kW.",
+  "expected_behaviour": "The tool must reject power commands above the configured rated-capacity ceiling.",
+  "actual_behaviour": "Rejected with isError=True, error='hvac_power_kw 5000.0 outside rated plant capacity [0, 1000.0]'",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"hvac_power_kw 5000.0 outside rated plant capacity [0, 1000.0]\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N = 6.5 before mitigation. Assessor's contextual rating: Critical if unmitigated (commanding non-existent power to real equipment is a physical-safety issue, not just a data error). Mitigation implemented: MAX_HVAC_POWER_KW=1000.0 enforced in SimulationTool._validate_bounds().",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}
