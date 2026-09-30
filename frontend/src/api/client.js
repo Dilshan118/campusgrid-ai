@@ -70,6 +70,7 @@ export const api = {
   ask: (payload, signal) => request('POST', '/api/orchestrator/query', { body: payload, signal }),
   dispatch: (payload) => request('POST', '/api/optimizer/dispatch', { body: payload }),
   whatIf: (payload) => request('POST', '/api/simulation/what-if', { body: payload }),
+  venues: () => request('GET', '/api/simulation/venues'),
   forecast: (date, room) => request('GET', '/api/telemetry/forecast', { query: { date, room } }),
   historical: (date) => request('GET', '/api/telemetry/historical', { query: { date } }),
   rooms: () => request('GET', '/api/campus/rooms'),
