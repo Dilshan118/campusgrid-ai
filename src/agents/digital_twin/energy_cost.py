@@ -9,14 +9,20 @@ maximum-demand charge. Reference rates, not Agent 3's retrieved ones: a what-if
 simulation is exploratory and must not depend on a live document search.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.shared.constants import TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR, TARIFF_PEAK_LKR
 from src.shared.datetime_utils import build_tou_tariff_profile, index_to_time_slot, is_peak_hour
+from src.agents.digital_twin.validation import require_equal_lengths
 
 # Coefficient of performance of a typical inverter split unit in a tropical climate:
 # 3.2 kW of heat removed per kW of electricity drawn. An engineering estimate.
 AC_COP = 3.2
+
+_TARIFF_BASIS = (
+    f"PUCSL GP-2 reference rates: LKR {TARIFF_OFF_PEAK_LKR:g} off-peak, "
+    f"{TARIFF_DAY_LKR:g} day, {TARIFF_PEAK_LKR:g} peak per kWh"
+)
 
 
 def estimate_hvac_energy(
@@ -38,6 +44,40 @@ def estimate_hvac_energy(
         "peak_time": peak_slot,
         "peak_in_tariff_peak_window": bool(peak_slot and is_peak_hour(peak_slot)),
         "cop": cop,
-        "tariff_basis": f"PUCSL GP-2 reference rates: LKR {TARIFF_OFF_PEAK_LKR:g} off-peak, "
-                        f"{TARIFF_DAY_LKR:g} day, {TARIFF_PEAK_LKR:g} peak per kWh",
+        "tariff_basis": _TARIFF_BASIS,
     }
+
+
+def estimate_solar_shortfall(
+    forecast_solar_kw: List[float],
+    solar_scaling_factor: float,
+    forecast_demand_kw: Optional[List[float]] = None,
+    dt_hours: float = 0.5,
+) -> Dict[str, Any]:
+    """What a solar dropout does to the campus supply: the PV output left after scaling, the
+    energy lost, and (given the campus demand forecast) the extra grid import and its cost.
+
+    The scaled series is returned so the planning pipeline can re-run battery dispatch
+    against the reduced solar, which is what a dropout actually changes.
+    """
+    available = [round(max(0.0, s) * solar_scaling_factor, 2) for s in forecast_solar_kw]
+    result: Dict[str, Any] = {
+        "solar_scaling_factor": solar_scaling_factor,
+        "forecast_solar_kw": available,
+        "pv_energy_kwh": round(sum(available) * dt_hours, 2),
+        "pv_energy_lost_kwh": round(sum(max(0.0, s) for s in forecast_solar_kw) * dt_hours - sum(available) * dt_hours, 2),
+    }
+    if forecast_demand_kw is not None:
+        require_equal_lengths(forecast_solar_kw=forecast_solar_kw, forecast_demand_kw=forecast_demand_kw)
+        slots = [index_to_time_slot(i) for i in range(len(forecast_demand_kw))]
+        tariffs = build_tou_tariff_profile(slots, TARIFF_PEAK_LKR, TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR)
+        grid_before = [max(0.0, d - max(0.0, s)) for d, s in zip(forecast_demand_kw, forecast_solar_kw)]
+        grid_after = [max(0.0, d - a) for d, a in zip(forecast_demand_kw, available)]
+        result.update({
+            "extra_grid_import_kwh": round((sum(grid_after) - sum(grid_before)) * dt_hours, 2),
+            "extra_grid_cost_lkr": round(sum((a - b) * dt_hours * r for a, b, r in zip(grid_after, grid_before, tariffs)), 2),
+            "peak_grid_import_kw_before": round(max(grid_before, default=0.0), 2),
+            "peak_grid_import_kw_after": round(max(grid_after, default=0.0), 2),
+            "tariff_basis": _TARIFF_BASIS,
+        })
+    return result

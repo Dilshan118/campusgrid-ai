@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-14",
+  "test_objective": "Verify whether an on-path attacker (a compromised proxy, a shared network segment) could read commanded HVAC setpoints and occupancy from a captured tool-call message.",
+  "attack_scenario": "Serialize a real tools/call request exactly as it would be transmitted (json.dumps of the JSON-RPC envelope), before and after the message-signing mitigation, then inspect the raw bytes as an interceptor would.",
+  "expected_behaviour": "A production message protocol should encrypt payload contents (TLS) and sign the message; sensitive setpoints should not be readable from a captured payload.",
+  "actual_behaviour": "Before: plain, human-readable JSON with no signature field: {\"jsonrpc\": \"2.0\", \"id\": 14, \"method\": \"tools/call\", \"params\": {\"name\": \"simulate_building_thermal_dynamics\", \"arguments... After signing: the message carries an HMAC-SHA256 signature, nonce and timestamp (has_signature=True), but every argument is still readable (hvac_power_kw visible=True).",
+  "evidence_log": "before: signature_field=False; after: signature_field=True, nonce_field=True, arguments_readable=True",
+  "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N = 3.1. Mitigated in part: message signing (mcp_integrity.py) makes tampering detectable. Open: confidentiality needs HTTPS/mTLS at the reverse proxy, which is deployment work owned by the Team Lead (filed as a request).",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-10",
+  "test_objective": "Verify mismatched-length input arrays are rejected rather than silently truncated by zip().",
+  "attack_scenario": "MCP tools/call with ambient_temps of length 3 but occupant_counts/hvac_power_kw of length 1 \u2014 a client bug or an attempt to desynchronize which ambient reading pairs with which occupancy count.",
+  "expected_behaviour": "Reject the call when input array lengths disagree.",
+  "actual_behaviour": "Tool over MCP: rejected with isError=True, error='ambient_temps, occupant_counts and hvac_power_kw must be equal length (got 3, 1, 1)'. Physics model called directly: raised 'Per-interval series must all be the same length; got ambient_temps=3, occupant_counts=1, hvac_power_kw=1.'.",
+  "evidence_log": "{\"mcp_response\": {\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"ambient_temps, occupant_counts and hvac_power_kw must be equal length (got 3, 1, 1)\"}}, \"model_error\": \"Per-interval series must all be the same length; got ambient_temps=3, occupant_counts=1, hvac_power_kw=1.\"}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N = 4.3 before mitigation. Assessor's contextual rating: Medium (silent truncation via zip() would quietly run a shorter, wrong simulation instead of failing loudly). Mitigation implemented in two layers: the equal-length check in SimulationTool._validate_bounds(), and SeriesLengthMismatchError raised by BuildingThermalTwin.simulate() and BatteryDynamicsModel.simulate_soc_trajectory() themselves (src/agents/digital_twin/validation.py), so callers that never pass through the tool are protected too.",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

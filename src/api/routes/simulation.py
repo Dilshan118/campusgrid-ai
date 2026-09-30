@@ -72,6 +72,7 @@ def run_what_if_simulation(
         "num_acs": num_acs,
         "occupied_mask": occupied_mask(hours, len(ambients)),
         "precool_intervals": request.precool_minutes // 30,
+        "date": target_date,  # the sun's path for the room's solar heat gain
     })
     response = agent_response(res)
     room_config = response.data.get("room_config") or {}

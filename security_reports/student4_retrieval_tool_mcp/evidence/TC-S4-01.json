@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-01",
+  "test_objective": "Verify whether an extreme fabricated tariff figure submitted through the real document-ingestion path is caught before it becomes retrievable.",
+  "attack_scenario": "A document titled 'CEB_Tariff_2026_Official.pdf' claiming an off-peak rate of LKR 0.05/kWh (vs the real LKR 15.00/kWh) is submitted via RetrievalService.ingest_raw_document() \u2014 the actual front door for adding a document, not a direct vector-store write.",
+  "expected_behaviour": "Ingestion should reject or flag a clause whose extracted tariff figure is wildly outside the plausible reference range before it is embedded or indexed.",
+  "actual_behaviour": "ingest_raw_document() returned status='rejected', rejected_clauses=[{'source_document': 'CEB_Tariff_2026_Official.pdf', 'clause_reference': 'Section 1', 'reason': 'implausible regulatory figures: Retrieved off_peak=0.05 is outside the plausible range [2.0, 100.0]; using reference value 15.0.'}]. The document never entered the index: poisoned_present_in_search=False.",
+  "evidence_log": "{\"status\": \"rejected\", \"clauses_added\": 0, \"duplicates_skipped\": 0, \"rejected_clauses\": [{\"source_document\": \"CEB_Tariff_2026_Official.pdf\", \"clause_reference\": \"Section 1\", \"reason\": \"implausible regulatory figures: Retrieved off_peak=0.05 is outside the plausible range [2.0, 100.0]; using reference value 15.0.\"}], \"source_document\": \"CEB_Tariff_2026_Official.pdf\", \"message\": \"No new clauses were indexed; see duplicates_skipped / rejected_clauses.\"}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5 before mitigation. Assessor's contextual rating: informational \u2014 this confirms a real, working mitigation (ClauseScreener + RegulatoryRuleExtractor plausibility check, src/pipelines/document_ingestion/screening.py). No action needed for this specific case; see TC-S4-02 for the gap this check does not close.",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

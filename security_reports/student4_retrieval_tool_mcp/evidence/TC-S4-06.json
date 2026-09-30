@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-06",
+  "test_objective": "Test whether a dimension-mismatched query vector is rejected or silently degraded.",
+  "attack_scenario": "A 10-dimensional query vector is sent against a 384-dimensional indexed corpus \u2014 either a bug in a calling client, or a probe to see how malformed input is handled.",
+  "expected_behaviour": "A dimension mismatch should raise a clear validation error so the caller (or an attacker probing the API) cannot mistake it for a legitimate 'no good matches' response.",
+  "actual_behaviour": "No exception raised. similarity_search() returned 1 results, each with similarity=0.0 ([0.0]) \u2014 indistinguishable from a legitimate query that simply matched nothing.",
+  "evidence_log": "query_dim=10, indexed_dim=384, returned_similarities=[0.0]",
+  "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:L/A:N = 2.3. Assessor's contextual rating: Low-Medium \u2014 a fail-open behaviour that masks bugs and malformed/probing requests as normal empty results, making this class of error invisible in production logs. Mitigation: raise ValueError on a dimension mismatch instead of returning 0.0 similarity.",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}
