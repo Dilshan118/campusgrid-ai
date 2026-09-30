@@ -19,6 +19,12 @@ serves it over HTTP at `POST /api/mcp` (JSON-RPC in the request body, authentica
 every other route), with the container's registered tools. The protocol-level logic
 below (method dispatch, tool discovery, argument validation, error shapes) is identical
 regardless of which transport carries these JSON-RPC messages.
+
+Message integrity (mcp_integrity.py) is opt-in: given a MessageIntegrityGuard, the server
+answers only requests carrying a valid HMAC signature, a fresh timestamp and an unused
+nonce, which stops in-transit tampering (TC-S4-15) and replay. It is off by default so the
+HTTP endpoint keeps working for existing clients until the container is given the signing
+keys (a settings change owned by the Team Lead).
 """
 
 import json
@@ -26,6 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from src.domain.interfaces.tool import Tool
 from src.infrastructure.tools.simulation_tool import SimulationTool
+from src.agents.digital_twin.mcp_integrity import MessageIntegrityGuard
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
@@ -33,14 +40,21 @@ MCP_PROTOCOL_VERSION = "2024-11-05"
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
+# Server-defined range (-32000 to -32099): the message failed its integrity check.
+UNAUTHORIZED = -32001
 
 
 class MCPToolServer:
     """A minimal, spec-faithful MCP server exposing one or more `Tool` instances."""
 
-    def __init__(self, tools: Optional[List[Tool]] = None):
+    def __init__(self, tools: Optional[List[Tool]] = None, integrity_guard: Optional[MessageIntegrityGuard] = None):
         registered = tools if tools is not None else [SimulationTool()]
         self._tools: Dict[str, Tool] = {tool.name: tool for tool in registered}
+        self._integrity_guard = integrity_guard
+
+    @property
+    def requires_signed_messages(self) -> bool:
+        return self._integrity_guard is not None
 
     def _tool_definitions(self) -> List[Dict[str, Any]]:
         return [
@@ -71,10 +85,18 @@ class MCPToolServer:
         request_id = request.get("id")
         method = request["method"]
         params = request.get("params", {}) or {}
+        is_notification = str(method).startswith("notifications/")
+
+        # Checked before anything is dispatched: a tampered, replayed or unsigned message
+        # must not reach a tool. A rejected notification is still never answered.
+        if self._integrity_guard is not None:
+            rejection = self._integrity_guard.verify(request)
+            if rejection is not None:
+                return None if is_notification else self._error(request_id, UNAUTHORIZED, f"Rejected: {rejection}")
 
         # Notifications (e.g. "notifications/initialized", sent by every client after initialize)
         # carry no id and must not be answered (JSON-RPC 2.0 section 4.1).
-        if str(method).startswith("notifications/"):
+        if is_notification:
             return None
 
         if method == "ping":
@@ -129,6 +151,6 @@ class MCPToolServer:
         }
 
 
-def create_digital_twin_mcp_server() -> MCPToolServer:
+def create_digital_twin_mcp_server(integrity_guard: Optional[MessageIntegrityGuard] = None) -> MCPToolServer:
     """Wiring entry point: the MCP server this deliverable exposes to the pipeline."""
-    return MCPToolServer(tools=[SimulationTool()])
+    return MCPToolServer(tools=[SimulationTool()], integrity_guard=integrity_guard)
