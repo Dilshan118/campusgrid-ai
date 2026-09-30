@@ -19,9 +19,16 @@ c_in and r_vent are the constants fitted in thermal_calibration.py. The wall con
 documented, uncalibrated defaults (see src/config/settings.py) until measured data exists.
 """
 
+import math
 from typing import List, Optional
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface
 from src.shared.constants import HEAT_PER_OCCUPANT_KW
+
+# Explicit Euler is only well-behaved while dt * (total conductance) / capacitance stays
+# small. A real room's air responds in about an hour, so a single 30-minute step would
+# overshoot and oscillate; each interval is split into sub-steps until that ratio is <= 0.5.
+# Building-scale constants (the planning pipeline's defaults) need no split.
+_MAX_EULER_RATIO = 0.5
 
 class BuildingThermalTwin(BuildingThermalTwinInterface):
     """
@@ -51,22 +58,38 @@ class BuildingThermalTwin(BuildingThermalTwinInterface):
         hvac_power_kw: List[float],
         dt_hours: float = 0.5,
         initial_wall_temp_c: Optional[float] = None,
+        extra_heat_kw: Optional[List[float]] = None,
     ) -> List[float]:
         """Runs the 2R2C equations across time intervals; returns indoor air temperatures.
 
         The wall starts at the indoor temperature unless `initial_wall_temp_c` is given
-        (a building that has been conditioned overnight).
+        (a building that has been conditioned overnight). `extra_heat_kw` is an optional
+        per-interval heat gain independent of occupancy — e.g. the fixed equipment load
+        of a computer lab or a wet lab's instruments (see room_presets.py) — additive
+        with occupant heat, zero by default so every existing caller is unaffected.
         """
         t_in = initial_temp_c
         t_wall = initial_temp_c if initial_wall_temp_c is None else initial_wall_temp_c
+        extra = extra_heat_kw if extra_heat_kw is not None else [0.0] * len(ambient_temps)
+        n_sub = self._substeps(dt_hours)
+        h = dt_hours / n_sub
         indoor_history: List[float] = []
-        for t_amb, occupants, q_hvac in zip(ambient_temps, occupant_counts, hvac_power_kw):
+        for t_amb, occupants, q_hvac, q_extra in zip(ambient_temps, occupant_counts, hvac_power_kw, extra):
             q_occ = occupants * HEAT_PER_OCCUPANT_KW  # 100 W per occupant
-            q_wall_to_air = (t_wall - t_in) / self.r_in
-            q_vent = (t_amb - t_in) / self.r_vent
-            q_amb_to_wall = (t_amb - t_wall) / self.r_out
-
-            t_in = round(t_in + (q_wall_to_air + q_vent + q_occ - q_hvac) * (dt_hours / self.c_in), 2)
-            t_wall = t_wall + (q_amb_to_wall - q_wall_to_air) * (dt_hours / self.c_wall)
+            for _ in range(n_sub):
+                q_wall_to_air = (t_wall - t_in) / self.r_in
+                q_vent = (t_amb - t_in) / self.r_vent
+                q_amb_to_wall = (t_amb - t_wall) / self.r_out
+                t_in = t_in + (q_wall_to_air + q_vent + q_occ + q_extra - q_hvac) * (h / self.c_in)
+                t_wall = t_wall + (q_amb_to_wall - q_wall_to_air) * (h / self.c_wall)
+            # Sensor precision, carried into the next interval as the original implementation
+            # (and the SRS hand-computed regression test) do. Sub-steps inside an interval
+            # run at full precision.
+            t_in = round(t_in, 2)
             indoor_history.append(t_in)
         return indoor_history
+
+    def _substeps(self, dt_hours: float) -> int:
+        air_ratio = dt_hours * (1.0 / self.r_in + 1.0 / self.r_vent) / self.c_in
+        wall_ratio = dt_hours * (1.0 / self.r_in + 1.0 / self.r_out) / self.c_wall
+        return max(1, math.ceil(max(air_ratio, wall_ratio) / _MAX_EULER_RATIO))
