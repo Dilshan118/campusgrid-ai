@@ -27,6 +27,9 @@ from src.shared.datetime_utils import campus_today
 # Rated cooling one zone can draw when a setpoint is controlled (kW thermal). Settings override it.
 DEFAULT_HVAC_MAX_COOLING_KW = 35.0
 _THERMOSTAT_BISECTION_STEPS = 20
+# Slack when comparing the twin's battery trajectory with the solver's: both round to 0.01 kWh
+# per interval, so rounding alone can drift them apart by a few hundredths over a day.
+_SOC_AGREEMENT_TOLERANCE_KWH = 0.5
 
 
 def _as_date(value: Union[str, date, None]) -> date:
@@ -422,3 +425,122 @@ class DigitalTwinAgent(BaseAgent):
             for scenario_name, scenario_input in scenarios.items()
         }
 
+    def verify_dispatch_plan(
+        self,
+        simulation_input: Dict[str, Any],
+        dispatch_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Post-solve check: re-runs the digital twin on the plan Agent 4 actually produced.
+
+        `simulation_input` is the same input this agent was given before optimization
+        (weather, occupancy, room, ...). `dispatch_result` is Agent 4's output (its
+        `solver_output` and `battery_parameters`), or a bare solver output. The battery
+        schedule is simulated with the battery the plan was solved for; an HVAC schedule is
+        simulated too if the plan carries one (`hvac_power_kw`), else the thermostat is.
+
+        Returns a verdict the coordinator can act on:
+          - "accept":      the plan is physically feasible.
+          - "re_optimize": the plan breaks a limit that a different plan could meet
+                           (battery power/SOC limits, or comfort that full AC could hold).
+          - "reject":      the day is infeasible whatever the plan (comfort fails even with
+                           every AC at full power), or the plan cannot be simulated at all.
+        """
+        solver = dispatch_result.get("solver_output") or dispatch_result
+        battery = dispatch_result.get("battery_parameters") or {}
+        charge = [float(x) for x in solver.get("battery_charge_kw") or []]
+        discharge = [float(x) for x in solver.get("battery_discharge_kw") or []]
+
+        default_battery = self.battery_dynamics if isinstance(self.battery_dynamics, BatteryDynamicsModel) else BatteryDynamicsModel()
+        capacity_kwh = float(battery.get("battery_capacity_kwh", default_battery.capacity_kwh))
+        max_charge_kw = float(battery.get("max_charge_rate_kw", default_battery.max_power_kw))
+        max_discharge_kw = float(battery.get("max_discharge_rate_kw", default_battery.max_power_kw))
+        plan_battery = BatteryDynamicsModel(
+            capacity_kwh=capacity_kwh,
+            max_power_kw=max(max_charge_kw, max_discharge_kw),
+            min_soc_pct=default_battery.min_soc_pct,
+            max_soc_pct=default_battery.max_soc_pct,
+            round_trip_eff=default_battery.round_trip_eff,
+        )
+        twin = DigitalTwinAgent(
+            simulation_tool=self.simulation_tool, thermal_twin=self.thermal_twin, battery_dynamics=plan_battery,
+            comfort_min_c=self.comfort_min_c, comfort_max_c=self.comfort_max_c,
+            battery_capacity_kwh=capacity_kwh, hvac_max_cooling_kw=self.hvac_max_cooling_kw,
+        )
+
+        plan_input = {
+            **simulation_input,
+            "battery_charge_kw": charge,
+            "battery_discharge_kw": discharge,
+            "battery_initial_soc_kwh": capacity_kwh * float(battery.get("initial_soc_ratio", 0.5)),
+        }
+        plan_has_hvac = bool(solver.get("hvac_power_kw"))
+        if plan_has_hvac:
+            plan_input["hvac_power_kw"] = [float(x) for x in solver["hvac_power_kw"]]
+
+        run = twin.execute(plan_input)
+        if not run.success:
+            return {"verdict": "reject", "reasons": [f"The plan could not be simulated: {run.error}"],
+                    "checks": {}, "simulation": None}
+        sim = run.data
+
+        eps = 1e-6
+        over_charge = [i for i, c in enumerate(charge) if c > max_charge_kw + eps]
+        over_discharge = [i for i, d in enumerate(discharge) if d > max_discharge_kw + eps]
+        simultaneous = [i for i, (c, d) in enumerate(zip(charge, discharge)) if c > eps and d > eps]
+        solver_soc = [float(x) for x in solver.get("battery_soc_kwh") or []]
+        soc_gap_kwh = (
+            round(max(abs(a - b) for a, b in zip(sim["battery_soc_trajectory_kwh"], solver_soc)), 2)
+            if solver_soc and len(solver_soc) == len(charge) else None
+        )
+
+        reasons: List[str] = []
+        if sim["battery_soc_violations_count"]:
+            reasons.append(f"Battery leaves its state-of-charge band in {sim['battery_soc_violations_count']} interval(s).")
+        if over_charge:
+            reasons.append(f"Charging exceeds {max_charge_kw:g} kW in {len(over_charge)} interval(s).")
+        if over_discharge:
+            reasons.append(f"Discharging exceeds {max_discharge_kw:g} kW in {len(over_discharge)} interval(s).")
+        if simultaneous:
+            reasons.append(f"Battery charges and discharges at once in {len(simultaneous)} interval(s).")
+        if soc_gap_kwh is not None and soc_gap_kwh > _SOC_AGREEMENT_TOLERANCE_KWH:
+            reasons.append(f"The solver's state of charge differs from the simulated battery by up to {soc_gap_kwh:g} kWh.")
+        battery_ok = not reasons
+
+        comfort_ok = bool(sim["is_thermal_feasible"])
+        comfort_fixable: Optional[bool] = None
+        if not comfort_ok:
+            # Could any HVAC schedule have held comfort? Re-run with the thermostat at full
+            # capacity: if even that fails, no plan can fix the day.
+            best_effort = {k: v for k, v in plan_input.items() if k != "hvac_power_kw"}
+            best_effort.setdefault("target_setpoint_c", COMFORT_SETPOINT_DEFAULT_C)
+            best = twin.execute(best_effort)
+            comfort_fixable = bool(best.success and best.data["is_thermal_feasible"])
+            reasons.append(
+                f"Comfort band broken in {sim['comfort_violations_count']} interval(s) "
+                f"(worst by {sim['max_temp_deviation_c']:g} °C)"
+                + ("; full air-conditioning would hold it." if comfort_fixable
+                   else "; even full air-conditioning cannot hold it.")
+            )
+
+        if battery_ok and comfort_ok:
+            verdict = "accept"
+        elif comfort_fixable is False:
+            verdict = "reject"
+        else:
+            verdict = "re_optimize"
+
+        return {
+            "verdict": verdict,
+            "reasons": reasons,
+            "checks": {
+                "is_thermal_feasible": comfort_ok,
+                "comfort_fixable_by_hvac": comfort_fixable,
+                "battery_soc_violations": sim["battery_soc_violations_count"],
+                "charge_limit_breaches": len(over_charge),
+                "discharge_limit_breaches": len(over_discharge),
+                "simultaneous_charge_discharge": len(simultaneous),
+                "max_soc_gap_vs_solver_kwh": soc_gap_kwh,
+                "hvac_schedule_source": "plan" if plan_has_hvac else sim["hvac_mode"],
+            },
+            "simulation": sim,
+        }
