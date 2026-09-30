@@ -23,6 +23,7 @@ import math
 from typing import List, Optional
 from src.domain.interfaces.thermal_twin import BuildingThermalTwinInterface
 from src.shared.constants import HEAT_PER_OCCUPANT_KW
+from src.agents.digital_twin.validation import require_equal_lengths
 
 # Explicit Euler is only well-behaved while dt * (total conductance) / capacitance stays
 # small. A real room's air responds in about an hour, so a single 30-minute step would
@@ -67,10 +68,17 @@ class BuildingThermalTwin(BuildingThermalTwinInterface):
         per-interval heat gain independent of occupancy — e.g. the fixed equipment load
         of a computer lab or a wet lab's instruments (see room_presets.py) — additive
         with occupant heat, zero by default so every existing caller is unaffected.
+
+        Every series must have the same length: raises SeriesLengthMismatchError rather
+        than silently simulating only the shortest one.
         """
+        n = require_equal_lengths(
+            ambient_temps=ambient_temps, occupant_counts=occupant_counts, hvac_power_kw=hvac_power_kw,
+            extra_heat_kw=extra_heat_kw,
+        )
         t_in = initial_temp_c
         t_wall = initial_temp_c if initial_wall_temp_c is None else initial_wall_temp_c
-        extra = extra_heat_kw if extra_heat_kw is not None else [0.0] * len(ambient_temps)
+        extra = extra_heat_kw if extra_heat_kw is not None else [0.0] * n
         n_sub = self._substeps(dt_hours)
         h = dt_hours / n_sub
         indoor_history: List[float] = []

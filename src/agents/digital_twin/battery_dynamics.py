@@ -11,6 +11,7 @@ RESPONSIBILITIES:
 
 from typing import List, Tuple
 from src.domain.interfaces.thermal_twin import BatteryDynamicsInterface
+from src.agents.digital_twin.validation import require_equal_lengths
 
 class BatteryDynamicsModel(BatteryDynamicsInterface):
     """
@@ -43,7 +44,11 @@ class BatteryDynamicsModel(BatteryDynamicsInterface):
         """
         Simulates battery energy level across intervals.
         Returns: (soc_kwh_history, violation_count)
+
+        Raises SeriesLengthMismatchError if the charge and discharge plans differ in length,
+        rather than silently dropping the longer plan's last intervals.
         """
+        require_equal_lengths(charge_kw_series=charge_kw_series, discharge_kw_series=discharge_kw_series)
         current_soc = initial_soc_kwh
         soc_history: List[float] = []
         violations = 0
