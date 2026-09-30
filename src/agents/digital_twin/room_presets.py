@@ -17,14 +17,15 @@ The per-seat figures are documented engineering estimates built from:
   - floor slab + partitions, ~0.15 kWh/degC per m2 floor -> c_wall (slow node, hours)
   - ASHRAE 62.1 outdoor air (per person + per m2), 0.5 ACH infiltration and single
     glazing at ~15% of floor area, U~5.7 W/m2K           -> g_vent (air <-> outdoor)
+  - that glazing's solar heat gain (SHGC ~0.6, ~0.35 of
+    horizontal irradiance on a vertical window)          -> solar_aperture_m2_per_seat
   - interior surfaces ~3x floor area at h~8 W/m2K         -> g_in   (air <-> structure)
   - external wall/roof share at U~1.5-2 W/m2K              -> g_out  (structure <-> outdoor)
   - lighting at ~10 W/m2 plus the type's equipment        -> equipment_kw_per_seat
 
 The Lecture Hall's c_in and g_vent are the exception: they are the scipy-fitted constants
 from thermal_calibration.py (see _LECTURE_HALL_FITTED_*), not estimates. Solar gain through
-glazing is not modelled — the pipeline has no irradiance input yet — so afternoon loads on
-sun-facing rooms are understated.
+the glazing is Q_solar = irradiance x solar_aperture_m2 (see solar.py).
 """
 
 import math
@@ -40,6 +41,16 @@ _LECTURE_HALL_CALIBRATION_SEATS = 180
 _LECTURE_HALL_FITTED_C_IN = 1.3583
 _LECTURE_HALL_FITTED_R_VENT = 0.7476
 
+# A vertical window receives roughly this share of the irradiance on a horizontal surface over
+# a tropical day, where the sun is high for most of it. An engineering estimate.
+_VERTICAL_GLAZING_FACTOR = 0.35
+
+
+def _solar_aperture_per_seat(floor_m2_per_seat: float, glazing_share: float, shgc: float) -> float:
+    """Effective solar aperture (m2) per seat: the glazed area that lets the sun's heat in,
+    weighted by how much of it passes the glass (SHGC) and reaches a vertical window."""
+    return round(floor_m2_per_seat * glazing_share * shgc * _VERTICAL_GLAZING_FACTOR, 5)
+
 
 @dataclass(frozen=True)
 class RoomTypePreset:
@@ -53,6 +64,7 @@ class RoomTypePreset:
     g_in_per_seat: float          # kW/degC  — air <-> interior surfaces
     g_out_per_seat: float         # kW/degC  — structure <-> outdoor
     equipment_kw_per_seat: float  # kW       — lighting + equipment while the room is in use
+    solar_aperture_m2_per_seat: float  # m2    — effective glazing for solar heat gain
     seats_per_ac_unit: float      # sizing rule for the suggested AC count (with ~15% margin)
     notes: str
 
@@ -67,6 +79,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         g_vent_per_seat=round(1.0 / (_LECTURE_HALL_FITTED_R_VENT * _LECTURE_HALL_CALIBRATION_SEATS), 6),
         g_in_per_seat=0.024, g_out_per_seat=0.00145,
         equipment_kw_per_seat=0.012,  # lighting and a projector
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(1.0, 0.15, 0.6),
         seats_per_ac_unit=35.0,
         notes="1 m2/seat, 4 m tiered ceiling. c_in and g_vent are fitted (thermal_calibration.py).",
     ),
@@ -76,6 +89,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.010, c_wall_per_seat=0.30,
         g_vent_per_seat=0.010, g_in_per_seat=0.048, g_out_per_seat=0.0029,
         equipment_kw_per_seat=0.14,  # a ~120 W desktop per seat plus lighting
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(2.0, 0.15, 0.4),  # blinds drawn against screen glare
         seats_per_ac_unit=18.0,
         notes="2 m2/seat, 3 m ceiling. A PC per seat roughly doubles the heat each student brings.",
     ),
@@ -85,6 +99,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.016, c_wall_per_seat=0.45,
         g_vent_per_seat=0.022, g_in_per_seat=0.072, g_out_per_seat=0.0044,
         equipment_kw_per_seat=0.08,  # instruments, hot plates, lighting
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(3.0, 0.15, 0.6),
         seats_per_ac_unit=15.0,
         notes="3 m2/seat. Fume-hood exhaust (~6 air changes/h) makes ventilation the dominant load.",
     ),
@@ -94,6 +109,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.012, c_wall_per_seat=0.20,
         g_vent_per_seat=0.0053, g_in_per_seat=0.030, g_out_per_seat=0.0020,
         equipment_kw_per_seat=0.014,  # stage lighting and AV
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(0.9, 0.03, 0.6),  # almost windowless
         seats_per_ac_unit=35.0,
         notes="0.9 m2/seat, 8 m ceiling: a lot of air per seat, little glazing.",
     ),
@@ -103,6 +119,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.0147, c_wall_per_seat=0.375,
         g_vent_per_seat=0.0084, g_in_per_seat=0.060, g_out_per_seat=0.0036,
         equipment_kw_per_seat=0.055,  # laptop chargers and reading lights
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(2.5, 0.15, 0.6),
         seats_per_ac_unit=24.0,
         notes="2.5 m2/seat, 3.5 m ceiling — library reading rooms and open study spaces.",
     ),
@@ -112,6 +129,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.0176, c_wall_per_seat=0.45,
         g_vent_per_seat=0.0137, g_in_per_seat=0.072, g_out_per_seat=0.0044,
         equipment_kw_per_seat=0.05,  # drafting task lamps and a plotter
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(3.0, 0.20, 0.6),  # extra glazing for daylight
         seats_per_ac_unit=20.0,
         notes="3 m2/seat for large drafting tables, 3.5 m ceiling.",
     ),
@@ -121,6 +139,7 @@ ROOM_TYPE_PRESETS: Dict[str, RoomTypePreset] = {
         c_in_per_seat=0.010, c_wall_per_seat=0.30,
         g_vent_per_seat=0.0064, g_in_per_seat=0.048, g_out_per_seat=0.0029,
         equipment_kw_per_seat=0.03,  # lighting and a screen
+        solar_aperture_m2_per_seat=_solar_aperture_per_seat(2.0, 0.15, 0.6),
         seats_per_ac_unit=30.0,
         notes="2 m2/seat, 3 m ceiling.",
     ),
@@ -153,6 +172,7 @@ class ResolvedRoomConfig:
     ac_unit_cooling_kw: float
     total_hvac_capacity_kw: float
     equipment_heat_kw: float
+    solar_aperture_m2: float
     c_in: float
     r_vent: float
     c_wall: float
@@ -248,6 +268,7 @@ def resolve_room_config(
         ac_unit_cooling_kw=AC_UNIT_COOLING_KW,
         total_hvac_capacity_kw=round(resolved_num_acs * AC_UNIT_COOLING_KW, 2),
         equipment_heat_kw=round(preset.equipment_kw_per_seat * seats, 3),
+        solar_aperture_m2=round(preset.solar_aperture_m2_per_seat * seats, 3),
         c_in=round(preset.c_in_per_seat * seats, 4),
         r_vent=round(1.0 / (preset.g_vent_per_seat * seats), 5),
         c_wall=round(preset.c_wall_per_seat * seats, 4),
