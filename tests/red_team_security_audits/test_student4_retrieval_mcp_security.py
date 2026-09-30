@@ -35,6 +35,7 @@ requests, per TEAM_GUIDES/OWNERSHIP.md.
 """
 
 import json
+import os
 import time
 from typing import Dict, Any
 
@@ -46,19 +47,32 @@ from src.infrastructure.retrieval import BM25SearchEngine, RRFReranker
 from src.pipelines.document_ingestion.ingest_corpus import DocumentIngestionPipeline
 from src.application.services.retrieval_service import RetrievalService
 from src.infrastructure.tools.simulation_tool import SimulationTool
-from src.agents.digital_twin.mcp_server import create_digital_twin_mcp_server
+from src.agents.digital_twin.mcp_server import create_digital_twin_mcp_server, UNAUTHORIZED
+from src.agents.digital_twin.mcp_integrity import MessageIntegrityGuard, sign_request
+from src.agents.digital_twin.thermal_model import BuildingThermalTwin
+from src.agents.digital_twin.validation import SeriesLengthMismatchError
 
 
 def execute_audit_test_case(case: Dict[str, Any]):
     """Asserts adherence to the 7-Point Security Audit Schema. This checks the report
     is well-formed; the actual pass/fail security verdict is asserted separately in
-    each test, against real values returned by the live attack."""
+    each test, against real values returned by the live attack.
+
+    With AUDIT_EVIDENCE_DIR set, each case is also written there as <test_id>.json, with
+    the time it ran: the observed behaviour and evidence the audit report quotes.
+    """
     required_fields = [
         "test_id", "test_objective", "attack_scenario",
         "expected_behaviour", "actual_behaviour", "evidence_log", "severity_and_mitigation"
     ]
     for field in required_fields:
         assert field in case, f"Missing mandatory 7-point schema field: {field}"
+    evidence_dir = os.environ.get("AUDIT_EVIDENCE_DIR")
+    if evidence_dir:
+        os.makedirs(evidence_dir, exist_ok=True)
+        record = {**case, "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        with open(os.path.join(evidence_dir, f"{case['test_id']}.json"), "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, default=str)
 
 
 def _fresh_retrieval_service() -> RetrievalService:
@@ -121,7 +135,7 @@ def test_tc_s4_01_extreme_poison_is_blocked_by_clause_screening():
         "expected_behaviour": "Ingestion should reject or flag a clause whose extracted tariff figure is wildly outside the plausible reference range before it is embedded or indexed.",
         "actual_behaviour": f"ingest_raw_document() returned status={ingest_result['status']!r}, rejected_clauses={ingest_result['rejected_clauses']}. The document never entered the index: poisoned_present_in_search={poisoned_present}.",
         "evidence_log": json.dumps(ingest_result, default=str)[:800],
-        "severity_and_mitigation": "Severity: informational — this confirms a real, working mitigation (ClauseScreener + RegulatoryRuleExtractor plausibility check, src/pipelines/document_ingestion/screening.py). No action needed for this specific case; see TC-S4-02 for the gap this check does not close.",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5 before mitigation. Assessor's contextual rating: informational — this confirms a real, working mitigation (ClauseScreener + RegulatoryRuleExtractor plausibility check, src/pipelines/document_ingestion/screening.py). No action needed for this specific case; see TC-S4-02 for the gap this check does not close.",
     }
     execute_audit_test_case(case)
     assert ingest_result["status"] == "rejected", "Expected the extreme poison to be quarantined by ClauseScreener"
@@ -153,7 +167,7 @@ def test_tc_s4_02_plausible_range_poison_bypasses_screening():
         "expected_behaviour": "A range check alone should not be treated as a provenance/trust check — a wrong-but-plausible figure should still be flagged or require source verification.",
         "actual_behaviour": f"ingest_raw_document() returned status={ingest_result['status']!r} (accepted). The poisoned document appears in the top_k=2 window a facility manager actually sees: {[c['document_title'] for c in citations]}, at rank {poisoned_entry['rank'] if poisoned_entry else 'not present'} with score {poisoned_entry['confidence_score'] if poisoned_entry else 'n/a'} — comparable to the authentic clause's score.",
         "evidence_log": json.dumps(citations, default=str)[:800],
-        "severity_and_mitigation": "Severity: High — the range check gives false confidence; it stops obviously-absurd values but not a plausible-looking lie, which is the more realistic attack. Mitigation: pair the plausibility range with a verified-source allowlist or signature check, since numeric plausibility alone cannot establish trust.",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5. Assessor's contextual rating: High — the range check gives false confidence; it stops obviously-absurd values but not a plausible-looking lie, which is the more realistic attack. Mitigation: pair the plausibility range with a verified-source allowlist or signature check, since numeric plausibility alone cannot establish trust.",
     }
     execute_audit_test_case(case)
     assert ingest_result["status"] == "success", "Expected the plausible-range poison to be accepted, demonstrating the gap"
@@ -192,7 +206,7 @@ def test_tc_s4_03_semantic_near_collision_via_hybrid_search():
         "expected_behaviour": "A retrieval system with a genuine trust boundary should not let keyword-identical attacker content score comparably to an authentic source.",
         "actual_behaviour": f"Authentic clause score before attack: {authentic_score}. Attacker clause score after indexing: {attacker_score} — both scores are the same order of magnitude, because with the default mock embedding provider, BM25 keyword overlap (not semantic embedding distance) dominates the RRF-fused rank.",
         "evidence_log": json.dumps(after["citations"], default=str)[:800],
-        "severity_and_mitigation": "Severity: High. Root cause matches ARCHITECTURE.md problem #4 (dense search is disabled by EMBEDDING_PROVIDER=mock in dev/test). Mitigation: switch to sentence_transformers embeddings before any real deployment (already flagged in .env.example), and add provenance weighting independent of text similarity.",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:L/A:N = 2.4. Assessor's contextual rating: High. Root cause matches ARCHITECTURE.md problem #4 (dense search is disabled by EMBEDDING_PROVIDER=mock in dev/test). Mitigation: switch to sentence_transformers embeddings before any real deployment (already flagged in .env.example), and add provenance weighting independent of text similarity.",
     }
     execute_audit_test_case(case)
     assert attacker_score is not None, "Expected the near-duplicate document to be retrieved at all"
@@ -227,7 +241,7 @@ def test_tc_s4_04_vector_cluster_manipulation():
         "expected_behaviour": "At least one authentic source document should remain visible in the top-k window, and fake documents should not be indistinguishable from it.",
         "actual_behaviour": f"top_k=2 citations: {sources_top2} ({fake_count_top2} of 2 are fake; authentic present: {authentic_present_top2}). top_k=4 citations: {sources_top4}.",
         "evidence_log": json.dumps(result_top4["citations"], default=str)[:800],
-        "severity_and_mitigation": "Severity: High — fake documents occupy real estate in the trusted top-k window alongside the authentic clause, and nothing distinguishes them to a downstream consumer. Mitigation: deduplicate near-identical clauses by source diversity before ranking, or always include at least one result from a verified-source allowlist regardless of score.",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5. Assessor's contextual rating: High — fake documents occupy real estate in the trusted top-k window alongside the authentic clause, and nothing distinguishes them to a downstream consumer. Mitigation: deduplicate near-identical clauses by source diversity before ranking, or always include at least one result from a verified-source allowlist regardless of score.",
     }
     execute_audit_test_case(case)
     assert fake_count_top2 >= 1, (
@@ -273,7 +287,7 @@ def test_tc_s4_05_vector_store_oversized_query_vector_dos():
         "expected_behaviour": "The vector store should reject a query vector whose dimensionality does not match the configured EMBEDDING_DIMENSION before doing any per-document work.",
         "actual_behaviour": f"Request accepted with no validation or error; {len(results)} results returned in {elapsed_ms:.2f}ms against a 1-document corpus. No length check exists anywhere in MemoryVectorStore._cosine_similarity() or similarity_search().",
         "evidence_log": f"len(query_vector)={len(huge_query_vector)}, results={len(results)}, elapsed_ms={elapsed_ms:.2f}",
-        "severity_and_mitigation": "Severity: Medium in this in-memory/small-corpus deployment, High at production corpus scale — cost scales linearly with both corpus size and query-vector length, so a real campus-scale document corpus plus an oversized vector is a genuine CPU-exhaustion amplification vector. Mitigation: reject any query_vector whose length != EmbeddingSettings.dimension at the top of similarity_search().",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:N/A:L = 2.3. Assessor's contextual rating: Medium in this in-memory/small-corpus deployment, High at production corpus scale — cost scales linearly with both corpus size and query-vector length, so a real campus-scale document corpus plus an oversized vector is a genuine CPU-exhaustion amplification vector. Mitigation: reject any query_vector whose length != EmbeddingSettings.dimension at the top of similarity_search().",
     }
     execute_audit_test_case(case)
     assert len(results) == 1, "The store accepted the oversized vector and still returned float results — confirms no size guard exists"
@@ -295,7 +309,7 @@ def test_tc_s4_06_vector_store_dimension_mismatch_fails_open():
         "expected_behaviour": "A dimension mismatch should raise a clear validation error so the caller (or an attacker probing the API) cannot mistake it for a legitimate 'no good matches' response.",
         "actual_behaviour": f"No exception raised. similarity_search() returned {len(results)} results, each with similarity=0.0 ({similarities}) — indistinguishable from a legitimate query that simply matched nothing.",
         "evidence_log": f"query_dim=10, indexed_dim=384, returned_similarities={similarities}",
-        "severity_and_mitigation": "Severity: Low-Medium — a fail-open behaviour that masks bugs and malformed/probing requests as normal empty results, making this class of error invisible in production logs. Mitigation: raise ValueError on a dimension mismatch instead of returning 0.0 similarity.",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:L/A:N = 2.3. Assessor's contextual rating: Low-Medium — a fail-open behaviour that masks bugs and malformed/probing requests as normal empty results, making this class of error invisible in production logs. Mitigation: raise ValueError on a dimension mismatch instead of returning 0.0 similarity.",
     }
     execute_audit_test_case(case)
     assert all(s == 0.0 for s in similarities), "Expected the fail-open zero-similarity behaviour this case documents"
@@ -328,7 +342,7 @@ def test_tc_s4_07_mcp_extreme_temperature_spoofing():
         "expected_behaviour": "The tool must reject the call at the boundary before running any physics.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}",
         "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: High if unmitigated (a -15C command could instruct real HVAC hardware to run in an undefined regime). Mitigation implemented: SimulationTool._validate_bounds() rejects any initial_temp_c or ambient_temp outside [10.0, 45.0]C before simulate() runs.",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N = 6.5 before mitigation. Assessor's contextual rating: High if unmitigated (a -15C command could instruct real HVAC hardware to run in an undefined regime). Mitigation implemented: SimulationTool._validate_bounds() rejects any initial_temp_c or ambient_temp outside [10.0, 45.0]C before simulate() runs.",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
@@ -347,7 +361,7 @@ def test_tc_s4_08_mcp_extreme_power_spoofing():
         "expected_behaviour": "The tool must reject power commands above the configured rated-capacity ceiling.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}",
         "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: Critical if unmitigated (commanding non-existent power to real equipment is a physical-safety issue, not just a data error). Mitigation implemented: MAX_HVAC_POWER_KW=1000.0 enforced in SimulationTool._validate_bounds().",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N = 6.5 before mitigation. Assessor's contextual rating: Critical if unmitigated (commanding non-existent power to real equipment is a physical-safety issue, not just a data error). Mitigation implemented: MAX_HVAC_POWER_KW=1000.0 enforced in SimulationTool._validate_bounds().",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
@@ -366,7 +380,7 @@ def test_tc_s4_09_mcp_negative_occupancy_spoofing():
         "expected_behaviour": "Reject negative occupancy at the boundary.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}",
         "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: Medium (would silently subtract heat from the room, masking a real thermal risk in feasibility checks). Mitigation implemented: occupant_count bounds-checked to [0, 5000] in SimulationTool._validate_bounds().",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N = 4.3 before mitigation. Assessor's contextual rating: Medium (would silently subtract heat from the room, masking a real thermal risk in feasibility checks). Mitigation implemented: occupant_count bounds-checked to [0, 5000] in SimulationTool._validate_bounds().",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
@@ -377,18 +391,26 @@ def test_tc_s4_10_mcp_array_length_desynchronization():
     response = _call_simulation_tool_over_mcp({
         "initial_temp_c": 24.0, "ambient_temps": [24.0, 24.0, 24.0], "occupant_counts": [10], "hvac_power_kw": [5.0]
     })
+    # Second layer: the physics model itself, for callers that bypass the tool (the agent,
+    # calibration, the what-if API). It used to zip() the series and simulate 1 interval.
+    try:
+        BuildingThermalTwin().simulate(24.0, [24.0, 24.0, 24.0], [10], [5.0])
+        model_error = None
+    except SeriesLengthMismatchError as exc:
+        model_error = exc.message
 
     case = {
         "test_id": "TC-S4-10",
         "test_objective": "Verify mismatched-length input arrays are rejected rather than silently truncated by zip().",
         "attack_scenario": "MCP tools/call with ambient_temps of length 3 but occupant_counts/hvac_power_kw of length 1 — a client bug or an attempt to desynchronize which ambient reading pairs with which occupancy count.",
         "expected_behaviour": "Reject the call when input array lengths disagree.",
-        "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}",
-        "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: Medium (silent truncation via zip() would quietly run a shorter, wrong simulation instead of failing loudly). Mitigation implemented: equal-length check in SimulationTool._validate_bounds() before zip() is ever called in BuildingThermalTwin.simulate().",
+        "actual_behaviour": f"Tool over MCP: rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}. Physics model called directly: raised {model_error!r}.",
+        "evidence_log": json.dumps({"mcp_response": response, "model_error": model_error}, default=str),
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N = 4.3 before mitigation. Assessor's contextual rating: Medium (silent truncation via zip() would quietly run a shorter, wrong simulation instead of failing loudly). Mitigation implemented in two layers: the equal-length check in SimulationTool._validate_bounds(), and SeriesLengthMismatchError raised by BuildingThermalTwin.simulate() and BatteryDynamicsModel.simulate_soc_trajectory() themselves (src/agents/digital_twin/validation.py), so callers that never pass through the tool are protected too.",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
+    assert model_error is not None, "The physics model must refuse mismatched series, not truncate them"
 
 
 def test_tc_s4_11_mcp_nan_infinity_injection():
@@ -408,7 +430,7 @@ def test_tc_s4_11_mcp_nan_infinity_injection():
         "expected_behaviour": "NaN must be rejected, not silently pass through as an 'in range' value.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}. Confirmed the chained comparison `MIN <= x <= MAX` used in _validate_bounds() correctly evaluates to False for NaN (unlike separate < / > checks would).",
         "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: High if the naive pattern had been used — NaN would propagate through the physics undetected. Mitigation implemented and verified: chained-comparison bounds checks in SimulationTool._validate_bounds().",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:L = 5.4 before mitigation. Assessor's contextual rating: High if the naive pattern had been used — NaN would propagate through the physics undetected. Mitigation implemented and verified: chained-comparison bounds checks in SimulationTool._validate_bounds().",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
@@ -431,7 +453,7 @@ def test_tc_s4_12_mcp_type_confusion_injection():
         "expected_behaviour": "Reject with a controlled error; must never propagate an unhandled exception to the caller.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}. NOTE: this audit initially found SimulationTool.execute() ran float()/int() coercion BEFORE the try/except block, so this exact payload crashed the tool with an unhandled ValueError. Fixed by moving coercion inside the try/except (see src/infrastructure/tools/simulation_tool.py) — this test now exercises the fixed code path.",
         "evidence_log": json.dumps(response, default=str),
-        "severity_and_mitigation": "Severity: Medium (unhandled exception is a denial-of-service / crash vector for the calling agent, not a data-injection risk since this codebase uses no string-interpolated SQL). Mitigation implemented and verified: type coercion moved inside the try/except in SimulationTool.execute().",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:L = 4.3 before mitigation. Assessor's contextual rating: Medium (unhandled exception is a denial-of-service / crash vector for the calling agent, not a data-injection risk since this codebase uses no string-interpolated SQL). Mitigation implemented and verified: type coercion moved inside the try/except in SimulationTool.execute().",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
@@ -455,83 +477,107 @@ def test_tc_s4_13_mcp_resource_exhaustion_oversized_horizon():
         "expected_behaviour": "Reject requests exceeding the pipeline's designed horizon.",
         "actual_behaviour": f"Rejected with isError={response['result']['isError']}, error={response['result'].get('error')!r}",
         "evidence_log": json.dumps(response, default=str)[:400],
-        "severity_and_mitigation": "Severity: Medium (a single call could previously force an arbitrarily long simulation loop — a compute-exhaustion / DoS vector). Mitigation implemented: MAX_INTERVALS=48 enforced in SimulationTool._validate_bounds().",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H = 6.5 before mitigation. Assessor's contextual rating: Medium (a single call could previously force an arbitrarily long simulation loop — a compute-exhaustion / DoS vector). Mitigation implemented: MAX_INTERVALS=48 enforced in SimulationTool._validate_bounds().",
     }
     execute_audit_test_case(case)
     assert response["result"]["isError"] is True
 
 
 # =============================================================================
-# Category E — interception & tampering (TC-S4-14, TC-S4-15)
+# Category E — interception, tampering & replay (TC-S4-14, TC-S4-15)
+# Each case runs the attack twice: against the server as the HTTP endpoint serves it today
+# (no integrity guard: the "before" evidence), and against a server with the mitigation,
+# MessageIntegrityGuard (src/agents/digital_twin/mcp_integrity.py: the "after" evidence).
 # =============================================================================
 
-def test_tc_s4_14_unencrypted_tool_call_interception():
-    """TC-S4-14: Tool-call messages carry sensitive commands in cleartext with no
-    message-level authentication field."""
-    legit_request = {
-        "jsonrpc": "2.0", "id": 14, "method": "tools/call",
+_AUDIT_KEY_ID = "agent2-audit"
+_AUDIT_SECRET = "student4-audit-only-secret"
+
+
+def _thermal_tools_call(request_id: int, hvac_kw: float) -> Dict[str, Any]:
+    return {
+        "jsonrpc": "2.0", "id": request_id, "method": "tools/call",
         "params": {
             "name": "simulate_building_thermal_dynamics",
             "arguments": {
                 "initial_temp_c": 24.0,
                 "ambient_temps": [24.0] * 4,
                 "occupant_counts": [50] * 4,
-                "hvac_power_kw": [10.0] * 4,
+                "hvac_power_kw": [hvac_kw] * 4,
             },
         },
     }
-    wire_payload = json.dumps(legit_request)
+
+
+def test_tc_s4_14_unencrypted_tool_call_interception():
+    """TC-S4-14: Tool-call messages cross the wire as readable JSON. Signing adds integrity
+    but not confidentiality, so this finding stays open until the transport is encrypted."""
+    legit_request = _thermal_tools_call(14, 10.0)
+    before_payload = json.dumps(legit_request)
+    after_payload = json.dumps(sign_request(legit_request, _AUDIT_KEY_ID, _AUDIT_SECRET))
 
     case = {
         "test_id": "TC-S4-14",
         "test_objective": "Verify whether an on-path attacker (a compromised proxy, a shared network segment) could read commanded HVAC setpoints and occupancy from a captured tool-call message.",
-        "attack_scenario": "Serialize a real tools/call request exactly as it would be transmitted (json.dumps of the JSON-RPC envelope), then inspect the raw bytes as an interceptor would.",
-        "expected_behaviour": "A production message protocol should encrypt payload contents (TLS) and/or sign the message; sensitive setpoints should not be trivially readable from a captured payload.",
-        "actual_behaviour": f"The full request is plain, human-readable JSON: {wire_payload[:150]}... — every argument (temperature, occupancy, HVAC power) is readable without decryption. No 'signature', 'hmac', 'nonce', or 'auth' field exists anywhere in the message schema.",
-        "evidence_log": f"payload_bytes_readable=True, has_signature_field={'signature' in wire_payload}, has_hmac_field={'hmac' in wire_payload}",
-        "severity_and_mitigation": "Severity: Medium (this project's MCP transport is currently in-process / same-host; risk becomes High the moment this is exposed over a real network). Mitigation: carry MCP traffic over TLS (wss/https transport) and add per-message signing once the real `mcp` SDK transport is wired in (filed as a WIRE request to the Team Lead, since pyproject.toml is lead-owned).",
+        "attack_scenario": "Serialize a real tools/call request exactly as it would be transmitted (json.dumps of the JSON-RPC envelope), before and after the message-signing mitigation, then inspect the raw bytes as an interceptor would.",
+        "expected_behaviour": "A production message protocol should encrypt payload contents (TLS) and sign the message; sensitive setpoints should not be readable from a captured payload.",
+        "actual_behaviour": (
+            f"Before: plain, human-readable JSON with no signature field: {before_payload[:120]}... "
+            f"After signing: the message carries an HMAC-SHA256 signature, nonce and timestamp "
+            f"(has_signature={'signature' in after_payload}), but every argument is still readable "
+            f"(hvac_power_kw visible={'hvac_power_kw' in after_payload})."
+        ),
+        "evidence_log": f"before: signature_field={'signature' in before_payload}; after: signature_field={'signature' in after_payload}, nonce_field={'nonce' in after_payload}, arguments_readable={'hvac_power_kw' in after_payload}",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N = 3.1. Mitigated in part: message signing (mcp_integrity.py) makes tampering detectable. Open: confidentiality needs HTTPS/mTLS at the reverse proxy, which is deployment work owned by the Team Lead (filed as a request).",
     }
     execute_audit_test_case(case)
-    assert "signature" not in wire_payload and "hmac" not in wire_payload, (
-        "Confirms no message-authentication field exists in the current schema"
-    )
+    assert "signature" not in before_payload, "Before: no message-authentication field existed"
+    assert "signature" in after_payload, "After: every signed message carries its HMAC"
+    assert "hvac_power_kw" in after_payload, "Signing does not encrypt: the confidentiality finding stays open"
 
 
-def test_tc_s4_15_payload_tampering_undetected():
-    """TC-S4-15: A MITM-style modification to a legitimate request's arguments is
-    executed as-is, because nothing in the protocol can detect the tampering."""
-    server = create_digital_twin_mcp_server()
-    original_request = {
-        "jsonrpc": "2.0", "id": 15, "method": "tools/call",
-        "params": {
-            "name": "simulate_building_thermal_dynamics",
-            "arguments": {
-                "initial_temp_c": 24.0,
-                "ambient_temps": [24.0] * 4,
-                "occupant_counts": [50] * 4,
-                "hvac_power_kw": [10.0] * 4,
-            },
-        },
-    }
-    wire_bytes = json.dumps(original_request).encode("utf-8")
+def test_tc_s4_15_payload_tampering_and_replay():
+    """TC-S4-15: A MITM-style modification of a legitimate request, and a replay of a captured
+    one. Before the mitigation both execute; after it, both are rejected before any tool runs."""
+    # --- Before: the server as the HTTP endpoint serves it today (no integrity guard).
+    unguarded = create_digital_twin_mcp_server()
+    tampered_plain = _thermal_tools_call(15, 10.0)
+    tampered_plain["params"]["arguments"]["hvac_power_kw"] = [999.0] * 4  # still under the 1000 kW cap
+    before_tamper = unguarded.handle_request(tampered_plain)
+    replay_plain = _thermal_tools_call(15, 10.0)
+    before_replays = [unguarded.handle_request(replay_plain) for _ in range(3)]
 
-    # Simulate a MITM proxy altering the HVAC command in transit, before it reaches the server.
-    tampered_request = json.loads(wire_bytes.decode("utf-8"))
-    tampered_request["params"]["arguments"]["hvac_power_kw"] = [999.0] * 4  # still under the 1000kW cap
-    response = server.handle_request(tampered_request)
+    # --- After: the same attacks against a server with MessageIntegrityGuard.
+    guarded = create_digital_twin_mcp_server(MessageIntegrityGuard({_AUDIT_KEY_ID: _AUDIT_SECRET}))
+    genuine = sign_request(_thermal_tools_call(15, 10.0), _AUDIT_KEY_ID, _AUDIT_SECRET)
+    tampered = json.loads(json.dumps(genuine))
+    tampered["params"]["arguments"]["hvac_power_kw"] = [999.0] * 4
+    after_tamper = guarded.handle_request(tampered)
+    after_genuine = guarded.handle_request(genuine)
+    after_replay = guarded.handle_request(genuine)
 
-    executed_hvac = json.loads(response["result"]["content"][0]["text"])
     case = {
         "test_id": "TC-S4-15",
-        "test_objective": "Verify whether a tampered tool-call payload (arguments altered in transit) is detected before execution.",
-        "attack_scenario": "A legitimate request commanding 10.0kW HVAC is intercepted and rewritten to 999.0kW (still inside the per-value bounds, so bounds validation alone cannot catch it), then delivered to the server.",
-        "expected_behaviour": "A protocol with message integrity (e.g. HMAC over the canonical request body) should detect that the payload no longer matches what the legitimate client sent, and reject it.",
-        "actual_behaviour": f"The server executed the TAMPERED command with no error: isError={response['result']['isError']}. No integrity check exists to distinguish the tampered request from the original.",
-        "evidence_log": json.dumps({"tampered_request": tampered_request, "response": response}, default=str)[:800],
-        "severity_and_mitigation": "Severity: High — a tampered-but-plausible value (999kW instead of 10kW) passes every bounds check yet is not what the legitimate client intended, and there is no way for the server to tell. Mitigation: sign each request with an HMAC over the canonical JSON body, keyed per-client, and reject any request whose signature does not match.",
+        "test_objective": "Verify whether a tool-call payload altered in transit, or a captured payload sent again, is detected before execution.",
+        "attack_scenario": "A legitimate request commanding 10.0 kW HVAC is intercepted and rewritten to 999.0 kW (inside the per-value bounds, so bounds validation alone cannot catch it); separately, a captured legitimate request is re-sent. Both are run against the server without and with the message-integrity mitigation.",
+        "expected_behaviour": "The server should detect that the payload no longer matches what the legitimate client signed and reject it, and should refuse to execute the same signed message twice.",
+        "actual_behaviour": (
+            f"Before: the tampered 999 kW command executed (isError={before_tamper['result']['isError']}), and a captured "
+            f"request executed {sum(1 for r in before_replays if 'result' in r)} times out of 3. "
+            f"After: tampered -> {after_tamper.get('error')}; genuine -> isError={after_genuine['result']['isError']}; "
+            f"replay of the genuine message -> {after_replay.get('error')}."
+        ),
+        "evidence_log": json.dumps({
+            "before_tamper": before_tamper, "after_tamper": after_tamper,
+            "after_genuine_is_error": after_genuine["result"]["isError"], "after_replay": after_replay,
+        }, default=str)[:900],
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N = 5.3 before mitigation. Mitigation implemented: HMAC-SHA256 over the canonical request, a per-client key id, a 300 s timestamp window and a single-use nonce (src/agents/digital_twin/mcp_integrity.py, enforced in MCPToolServer.handle_request). Residual: the /api/mcp endpoint enables it once the Team Lead adds the signing keys to settings and the container.",
     }
     execute_audit_test_case(case)
-    assert response["result"]["isError"] is False, (
-        "Demonstrates the tampered-but-in-bounds request is executed, not rejected — "
-        "this is the actual finding, not a false positive"
-    )
+    # Before: the finding, reproduced.
+    assert before_tamper["result"]["isError"] is False, "Before: the tampered-but-in-bounds command executed"
+    assert all("result" in r for r in before_replays), "Before: every replay executed"
+    # After: the mitigation, verified.
+    assert after_tamper["error"]["code"] == UNAUTHORIZED
+    assert after_genuine["result"]["isError"] is False, "The genuine signed request must still work"
+    assert after_replay["error"]["code"] == UNAUTHORIZED
