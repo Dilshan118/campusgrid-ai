@@ -38,8 +38,8 @@ AC_UNIT_COOLING_KW = 7.0
 # thermal_calibration.run_calibration_report() for its 180-seat lecture hall. Kept in sync by
 # test_member3_lecture_hall_preset_matches_calibration.
 _LECTURE_HALL_CALIBRATION_SEATS = 180
-_LECTURE_HALL_FITTED_C_IN = 1.3583
-_LECTURE_HALL_FITTED_R_VENT = 0.7476
+_LECTURE_HALL_FITTED_C_IN = 1.3043
+_LECTURE_HALL_FITTED_R_VENT = 0.7472
 
 # A vertical window receives roughly this share of the irradiance on a horizontal surface over
 # a tropical day, where the sun is high for most of it. An engineering estimate.
