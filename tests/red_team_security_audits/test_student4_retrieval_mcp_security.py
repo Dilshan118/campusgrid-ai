@@ -42,6 +42,7 @@ from typing import Dict, Any
 import pytest
 
 from src.infrastructure.vector_store.memory_store import MemoryVectorStore
+from src.domain.exceptions.base import VectorStoreException
 from src.infrastructure.embeddings.mock_embeddings import MockEmbeddingProvider
 from src.infrastructure.retrieval import BM25SearchEngine, RRFReranker
 from src.pipelines.document_ingestion.ingest_corpus import DocumentIngestionPipeline
@@ -272,47 +273,46 @@ def _seed_vector_store_with_one_document() -> MemoryVectorStore:
 
 
 def test_tc_s4_05_vector_store_oversized_query_vector_dos():
-    """TC-S4-05: similarity_search() has no bound on query-vector dimensionality."""
+    """TC-S4-05: similarity_search() must bound query-vector dimensionality (fixed)."""
     store = _seed_vector_store_with_one_document()
     huge_query_vector = [0.001] * 200_000  # 520x the real 384-dim embeddings
 
     start = time.time()
-    results = store.similarity_search(huge_query_vector, top_k=2)
+    with pytest.raises(VectorStoreException) as rejected:
+        store.similarity_search(huge_query_vector, top_k=2)
     elapsed_ms = (time.time() - start) * 1000.0
 
     case = {
         "test_id": "TC-S4-05",
         "test_objective": "Test whether MemoryVectorStore.similarity_search() validates query-vector size before doing O(corpus_size x vector_length) work per call.",
-        "attack_scenario": f"A 200,000-float query vector (520x the real 384-dim embedding size) is submitted directly to similarity_search().",
+        "attack_scenario": "A 200,000-float query vector (520x the real 384-dim embedding size) is submitted directly to similarity_search().",
         "expected_behaviour": "The vector store should reject a query vector whose dimensionality does not match the configured EMBEDDING_DIMENSION before doing any per-document work.",
-        "actual_behaviour": f"Request accepted with no validation or error; {len(results)} results returned in {elapsed_ms:.2f}ms against a 1-document corpus. No length check exists anywhere in MemoryVectorStore._cosine_similarity() or similarity_search().",
-        "evidence_log": f"len(query_vector)={len(huge_query_vector)}, results={len(results)}, elapsed_ms={elapsed_ms:.2f}",
-        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:N/A:L = 2.3. Assessor's contextual rating: Medium in this in-memory/small-corpus deployment, High at production corpus scale — cost scales linearly with both corpus size and query-vector length, so a real campus-scale document corpus plus an oversized vector is a genuine CPU-exhaustion amplification vector. Mitigation: reject any query_vector whose length != EmbeddingSettings.dimension at the top of similarity_search().",
+        "actual_behaviour": f"Rejected before any scoring with VectorStoreException in {elapsed_ms:.2f}ms: {rejected.value.message}",
+        "evidence_log": f"len(query_vector)={len(huge_query_vector)}, error_code={rejected.value.error_code}, elapsed_ms={elapsed_ms:.2f}",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:N/A:L = 2.3. Mitigated: validate_vector() in src/domain/interfaces/vector_store.py caps length at 8,192 and requires the store's dimension at every adapter boundary (memory, pgvector, Chroma).",
     }
     execute_audit_test_case(case)
-    assert len(results) == 1, "The store accepted the oversized vector and still returned float results — confirms no size guard exists"
 
 
 def test_tc_s4_06_vector_store_dimension_mismatch_fails_open():
-    """TC-S4-06: A malformed (wrong-dimension) query silently returns zero-similarity
-    results instead of raising, masking the malformed request as a normal empty result."""
+    """TC-S4-06: A wrong-dimension query must raise, not return zero-similarity results (fixed)."""
     store = _seed_vector_store_with_one_document()
     wrong_dimension_vector = [0.1] * 10  # real corpus embeddings are 384-dim
 
-    results = store.similarity_search(wrong_dimension_vector, top_k=2)
-    similarities = [r.similarity for r in results]
+    with pytest.raises(VectorStoreException) as rejected:
+        store.similarity_search(wrong_dimension_vector, top_k=2)
 
     case = {
         "test_id": "TC-S4-06",
         "test_objective": "Test whether a dimension-mismatched query vector is rejected or silently degraded.",
         "attack_scenario": "A 10-dimensional query vector is sent against a 384-dimensional indexed corpus — either a bug in a calling client, or a probe to see how malformed input is handled.",
         "expected_behaviour": "A dimension mismatch should raise a clear validation error so the caller (or an attacker probing the API) cannot mistake it for a legitimate 'no good matches' response.",
-        "actual_behaviour": f"No exception raised. similarity_search() returned {len(results)} results, each with similarity=0.0 ({similarities}) — indistinguishable from a legitimate query that simply matched nothing.",
-        "evidence_log": f"query_dim=10, indexed_dim=384, returned_similarities={similarities}",
-        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:L/A:N = 2.3. Assessor's contextual rating: Low-Medium — a fail-open behaviour that masks bugs and malformed/probing requests as normal empty results, making this class of error invisible in production logs. Mitigation: raise ValueError on a dimension mismatch instead of returning 0.0 similarity.",
+        "actual_behaviour": f"Raised VectorStoreException: {rejected.value.message}",
+        "evidence_log": f"query_dim=10, indexed_dim=384, details={rejected.value.details}",
+        "severity_and_mitigation": "Severity: Low, CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:N/I:L/A:N = 2.3. Mitigated: the store's dimension is fixed by its first embedding and every later embedding and query must match it.",
     }
     execute_audit_test_case(case)
-    assert all(s == 0.0 for s in similarities), "Expected the fail-open zero-similarity behaviour this case documents"
+    assert rejected.value.details["expected_dimension"] == 384
 
 
 # =============================================================================

@@ -141,6 +141,7 @@ class Container:
             self.audit_repo = InMemoryAuditLogRepository()
             self.analytics_repo = InMemoryAnalyticsEventRepository()
             self.vector_store = VectorStoreFactory.create(self.settings.vector_store)
+        self._check_vector_dimension()
 
         # 3. Tools & MCP Platform
         if (self.settings.weather.provider or "").lower() != "open-meteo":
@@ -275,6 +276,26 @@ class Container:
             {k: room.get(k) for k in ("room_id", "building_name", "room_type", "max_capacity")}
             for room in self.nlp_parser.rooms.values()
         ]
+
+    def _check_vector_dimension(self) -> None:
+        """Names the fix when the embedding model and the pgvector column disagree; without this the
+        first insert or search fails with a raw database error."""
+        column_dimension = getattr(self.vector_store, "column_dimension", None)
+        if column_dimension is None:
+            return
+        try:
+            stored = column_dimension()
+        except Exception as exc:  # database unreachable or not yet created: checked again per call
+            logger.warning("Could not read the pgvector column size (%s).", type(exc).__name__)
+            return
+        produced = self.embedding_provider.dimension
+        if stored is not None and stored != produced:
+            logger.error(
+                "Embedding provider %s produces %d-dimensional vectors but document_clauses.embedding is vector(%d). "
+                "Every regulation insert and search will be rejected until EMBEDDING_DIMENSION/the model or the "
+                "column is changed and the corpus re-indexed.",
+                type(self.embedding_provider).__name__, produced, stored,
+            )
 
     def _room_inventory(self) -> Optional[List[Dict[str, Any]]]:
         try:

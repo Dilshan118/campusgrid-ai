@@ -4,7 +4,7 @@ Connects to a local persistent or in-memory ChromaDB instance.
 """
 
 from typing import List, Dict, Any, Optional
-from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult
+from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult, validate_vector
 from src.domain.entities.rag import DocumentClause
 from src.domain.exceptions.base import VectorStoreException
 
@@ -65,6 +65,8 @@ class ChromaStore(VectorStore):
         top_k: int = 2,
         filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[VectorSearchResult]:
+        # Chroma itself rejects a size that differs from the collection's; this bounds and type-checks first.
+        query_vector = validate_vector(query_vector, None, "chromadb")
         col = self._get_collection()
         where_filter = filter_metadata if filter_metadata else None
 
