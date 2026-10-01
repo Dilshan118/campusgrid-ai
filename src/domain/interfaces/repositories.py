@@ -23,7 +23,11 @@ class RoomRepository(ABC):
         pass
 
 class TimetableRepository(ABC):
-    """Abstract repository for lecture timetables and expected occupancy."""
+    """Abstract repository for lecture timetables and expected occupancy.
+
+    An entry is {schedule_id, room_id, course_code, day_of_week (1 = Monday ... 7 = Sunday),
+    start_time "HH:MM", end_time "HH:MM", expected_students}. The write methods take entries
+    without schedule_id; validation happens in TimetableService before they are called."""
 
     @abstractmethod
     def get_schedule_for_day(self, day_of_week: int) -> List[Dict[str, Any]]:
@@ -32,6 +36,25 @@ class TimetableRepository(ABC):
     @abstractmethod
     def get_room_occupancy(self, room_id: str, time_slot: str, day_of_week: int) -> int:
         pass
+
+    def list_all(self) -> List[Dict[str, Any]]:
+        raise NotImplementedError(f"{type(self).__name__} does not support list_all()")
+
+    def replace_all(self, entries: List[Dict[str, Any]]) -> int:
+        """Replaces the whole timetable (a new semester) in one transaction; returns rows written."""
+        raise NotImplementedError(f"{type(self).__name__} does not support replace_all()")
+
+    def add_entries(self, entries: List[Dict[str, Any]]) -> List[int]:
+        """Appends sessions; returns their new schedule_ids."""
+        raise NotImplementedError(f"{type(self).__name__} does not support add_entries()")
+
+    def delete_entry(self, schedule_id: int) -> bool:
+        raise NotImplementedError(f"{type(self).__name__} does not support delete_entry()")
+
+    def source(self) -> str:
+        """Where the timetable comes from: 'seed' (the built-in demo sessions), 'managed' (uploaded or
+        edited in this process) or 'database' (the timetables table)."""
+        return "unknown"
 
 class MeterHistoryRepository(ABC):
     """Abstract repository for historical sub-meter telemetry records."""

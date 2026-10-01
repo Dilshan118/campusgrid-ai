@@ -103,3 +103,20 @@ class AnalyticsEventRequest(BaseModel):
     rank: Optional[int] = Field(default=None, ge=1, le=100)
     clause_reference: Optional[str] = Field(default=None, max_length=200)
 
+
+class TimetableUploadRequest(BaseModel):
+    """A whole timetable as CSV. Sent as lines, not one string: the sanitization middleware caps any
+    single string at 10,000 characters, which would silently cut a long file."""
+    csv_lines: List[str] = Field(..., min_length=2, max_length=5001, description="CSV text split into lines, header first")
+    mode: str = Field(default="replace", pattern=r"^(replace|append)$",
+                      description="'replace' swaps in a new semester's timetable; 'append' adds sessions")
+    dry_run: bool = Field(default=True, description="Validate and preview only; nothing is written")
+    filename: Optional[str] = Field(default=None, max_length=200)
+
+class TimetableSessionRequest(BaseModel):
+    room_id: str = Field(..., min_length=1, max_length=20)
+    course_code: str = Field(..., min_length=1, max_length=50)
+    day: str = Field(..., min_length=1, max_length=10, description="Mon..Sun, Monday..Sunday or 1..7")
+    start_time: str = Field(..., max_length=5, description="HH:MM, 24-hour")
+    end_time: str = Field(..., max_length=5, description="HH:MM, 24-hour")
+    expected_students: int = Field(..., ge=0, le=5000)

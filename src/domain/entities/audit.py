@@ -22,6 +22,7 @@ RECORD_FORECAST_REVIEW = "forecast_review"
 RECORD_OUT_OF_SCOPE = "out_of_scope_query"
 RECORD_KNOWLEDGE_INGESTION = "knowledge_ingestion"
 RECORD_APPROVAL_DECISION = "approval_decision"
+RECORD_TIMETABLE_UPDATE = "timetable_update"
 
 # Where the row stands in the human approval workflow.
 APPROVAL_PENDING = "pending"

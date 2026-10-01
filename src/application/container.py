@@ -44,6 +44,7 @@ from src.pipelines.document_ingestion.ingest_corpus import DocumentIngestionPipe
 from src.application.services.retrieval_service import RetrievalService
 from src.application.services.audit_service import AuditService
 from src.application.services.analytics_service import AnalyticsService
+from src.application.services.timetable_service import TimetableService
 from src.agents.telemetry.agent import TelemetryForecastingAgent
 from src.agents.digital_twin.agent import DigitalTwinAgent
 from src.agents.policy_rag.agent import PolicyRAGAgent
@@ -175,6 +176,9 @@ class Container:
         )
         self.audit_service = AuditService(audit_repo=self.audit_repo)
         self.analytics_service = AnalyticsService(event_repo=self.analytics_repo)
+        self.timetable_service = TimetableService(
+            timetable_repo=self.timetable_repo, room_repo=self.room_repo, audit_service=self.audit_service,
+        )
 
         # 5. Specialized Domain Agents
         # Each of agents 1, 2 and 4 runs member code unless it is listed in the baseline set
