@@ -43,9 +43,11 @@ class PolicyRAGAgent(BaseAgent):
         query = input_data.get("query", "What are the PUCSL GP-2 peak tariff rates and demand charge penalty?")
         top_k = int(input_data.get("top_k", 2))
         include_constraints = bool(input_data.get("include_tariff_constraints", False))
+        # Regulations in force on this date (a plan's target day); default today.
+        as_of = input_data.get("as_of_date")
 
         # 1. Hybrid search for the operator's own question (what the dashboard shows as sources)
-        retrieval_result = self.retrieval_service.search(query=query, top_k=top_k)
+        retrieval_result = self.retrieval_service.search(query=query, top_k=top_k, as_of=as_of)
         citations_list: List[Dict[str, Any]] = retrieval_result.get("citations", [])
 
         # 2. When feeding the solver, also retrieve the clauses that define the tariff constraints
@@ -53,7 +55,7 @@ class PolicyRAGAgent(BaseAgent):
         if include_constraints:
             seen = set()
             for constraint_query in CONSTRAINT_QUERIES:
-                for c in self.retrieval_service.search(query=constraint_query, top_k=2).get("citations", []):
+                for c in self.retrieval_service.search(query=constraint_query, top_k=2, as_of=as_of).get("citations", []):
                     if _citation_key(c) not in seen:
                         seen.add(_citation_key(c))
                         constraint_citations.append({**c, "retrieved_for": "tariff_constraints"})

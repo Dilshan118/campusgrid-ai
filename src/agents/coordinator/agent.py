@@ -152,7 +152,7 @@ class CampusGridOrchestrator(BaseAgent):
         # dispatch plan it runs concurrently with Agents 1 -> 2. Agent 4 waits for all three.
         a3_future: Optional[Future] = None
         if action == ACTION_OPTIMIZE_DISPATCH:
-            a3_future = self._start_agent3(user_query)
+            a3_future = self._start_agent3(user_query, parsed.get("date"))
 
         a1_res = self.agent1.execute({
             "date": parsed["date"],
@@ -276,15 +276,16 @@ class CampusGridOrchestrator(BaseAgent):
             digital_twin_feasibility=a2_res.data,
         )
 
-    def _start_agent3(self, query: str) -> Optional[Future]:
+    def _start_agent3(self, query: str, plan_date: Optional[str] = None) -> Optional[Future]:
         if not self.parallel_agents:
             return None
         run_in_context = contextvars.copy_context().run  # keeps the request ID in Agent 3's trace logs
-        return _PARALLEL_POOL.submit(run_in_context, self.agent3.execute, self._agent3_dispatch_input(query))
+        return _PARALLEL_POOL.submit(run_in_context, self.agent3.execute, self._agent3_dispatch_input(query, plan_date))
 
     @staticmethod
-    def _agent3_dispatch_input(query: str) -> Dict[str, Any]:
-        return {"query": query, "top_k": 2, "include_tariff_constraints": True}
+    def _agent3_dispatch_input(query: str, plan_date: Optional[str] = None) -> Dict[str, Any]:
+        # The tariff in force on the plan's own day, not today's.
+        return {"query": query, "top_k": 2, "include_tariff_constraints": True, "as_of_date": plan_date}
 
     def _handle_dispatch(self, ctx: Dict[str, Any], a1_res, a2_res, a3_future: Optional[Future] = None) -> Dict[str, Any]:
         parsed = ctx["parsed"]
@@ -298,7 +299,7 @@ class CampusGridOrchestrator(BaseAgent):
                     f"no answer within {self.agent3_timeout_seconds:g} seconds",
                 )
         else:
-            a3_res = self.agent3.execute(self._agent3_dispatch_input(ctx["query"]))
+            a3_res = self.agent3.execute(self._agent3_dispatch_input(ctx["query"], parsed.get("date")))
         if not a3_res.success:
             raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
