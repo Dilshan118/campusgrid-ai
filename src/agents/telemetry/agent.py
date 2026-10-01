@@ -98,16 +98,6 @@ class TelemetryForecastingAgent(BaseAgent):
             anomaly_indices=forecast.anomaly_indices,
         )
 
-        # 5. Plain-English forecast summary (one LLM call; every number in it comes
-        #    from `forecast` above, never from the model's own memory).
-        forecast_summary = build_forecast_summary(
-            llm_provider=self.llm_provider,
-            time_slots=forecast.time_slots,
-            forecast_demand_kw=forecast.forecast_demand_kw,
-            temperature_series_c=temp_series,
-            anomaly_indices=forecast.anomaly_indices,
-        )
-
         return {
             "target_date": target_date,
             "time_slots": forecast.time_slots,

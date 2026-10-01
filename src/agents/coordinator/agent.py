@@ -426,16 +426,6 @@ class CampusGridOrchestrator(BaseAgent):
             "max_charge_kw": float(params["max_charge_rate_kw"]),
             "max_discharge_kw": float(params["max_discharge_rate_kw"]),
         }
-        # Stored with the plan so a reviewer can render it from the audit record alone.
-        final_decision["explanation_concise"] = self._concise_explanation(final_decision["solver_summary"])
-        final_decision["citations"] = citations
-        final_decision["battery_limits"] = self.battery_limits
-        final_decision["assumptions"] = list(parsed.get("notes", []))
-        demand = a1_res.data.get("forecast_demand_kw", [])
-        solar = a1_res.data.get("forecast_solar_kw", [])
-        final_decision["baseline_grid_kw"] = [
-            round(max(0.0, d - (solar[i] if i < len(solar) else 0.0)), 1) for i, d in enumerate(demand)
-        ]
 
     @staticmethod
     def _concise_explanation(solver: Dict[str, Any]) -> Optional[str]:
