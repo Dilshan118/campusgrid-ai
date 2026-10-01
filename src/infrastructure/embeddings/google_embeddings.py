@@ -57,14 +57,12 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         return key
 
     def warm_up(self) -> None:
-        """Validates API credentials at startup."""
-        if not self.api_key and not os.getenv("GEMINI_API_KEY"):
-            logger.warning("GEMINI_API_KEY is not set; Google embeddings will fail when called.")
-            return
-        try:
-            self.embed_text("CampusGrid test initialization")
-        except Exception as e:
-            logger.warning("Google embedding warm-up query failed (%s); please verify your GEMINI_API_KEY.", e)
+        """Validates the API key, network path and vector size at startup.
+
+        Raises ProviderException on any failure, so EmbeddingProviderFactory can fall back to the
+        mock provider at startup instead of every later search failing at request time."""
+        self._get_api_key()
+        self.embed_text("CampusGrid test initialization")
 
     @property
     def dimension(self) -> int:
@@ -131,9 +129,16 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
             except Exception:
                 raise e
 
-        # Verify dimension
-        if embedding and len(embedding) != self._dimension:
-            self._dimension = len(embedding)
+        # A vector of another size would be written into (or compared against) a column of the
+        # configured size; refuse it rather than silently changing the provider's dimension.
+        if not embedding or len(embedding) != self._dimension:
+            raise ProviderException(
+                message=(
+                    f"Google embedding returned {len(embedding or [])} dimensions; EMBEDDING_DIMENSION is "
+                    f"{self._dimension}. Use a model that supports outputDimensionality or change the setting."
+                ),
+                provider_name="google",
+            )
 
         with self._cache_lock:
             self._cache[text] = embedding

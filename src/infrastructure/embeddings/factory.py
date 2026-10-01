@@ -9,6 +9,7 @@ on a machine that has never downloaded it). /api/health reports which provider i
 
 import importlib.util
 import logging
+import os
 from src.domain.interfaces.embeddings import EmbeddingProvider
 from src.infrastructure.embeddings.mock_embeddings import MockEmbeddingProvider
 from src.infrastructure.embeddings.sentence_transformers import SentenceTransformersProvider
