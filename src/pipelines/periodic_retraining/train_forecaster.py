@@ -13,27 +13,33 @@ RESPONSIBILITIES:
   baseline (the headline result: "my model scores X, the baseline scores Y").
 - Save the trained artifact for `forecaster.py` to load at inference time.
 
-Model backend: prefers LightGBM/scikit-learn (`pip install -e ".[ml]"`) when
-available. This development sandbox has no outbound internet access (verified:
-`pip install` and `curl` to external hosts both time out), so those optional
-libraries cannot be installed here. Rather than block on that, this trainer
-falls back to a dependency-free multiple linear regression (gradient descent,
-implemented in `model_utils.py`) so training, evaluation, and a real RMSE/MAE
-comparison still run end-to-end in this environment. Once the `ml` extra is
-installed on a machine with internet access, this file automatically prefers
-LightGBM without any code changes.
+Serving contract: the runtime (`forecaster.py`) serves exactly one model type, the JSON
+linear regression in `model_utils.py`, so that is what this trainer always trains, evaluates
+and saves. When LightGBM is installed (`pip install -e ".[ml]"`) it is trained as a
+*challenger* on the same split and its held-out scores are recorded in the artifact, but it
+is never saved as the served model — a training report can no longer describe a model that
+production does not run.
+
+Promotion and rollback: a new model replaces the served artifact only if it beats the
+baseline on the held-out days; otherwise it is written next to it as `<name>.candidate.json`.
+The artifact it replaces is kept as `<name>.previous.json`, and `--rollback` restores it.
 """
 
 import csv
+import hashlib
 import json
 import math
 import os
+import shutil
+import sys
 import time
+from datetime import datetime, timezone
 from datetime import date, timedelta
 from typing import Dict, Any, List, Tuple
 
 from src.domain.interfaces.forecaster import ForecasterTrainerInterface
 from src.agents.telemetry.model_utils import (
+    FEATURE_NAMES,
     build_feature_vector,
     rmse,
     mae,
@@ -78,16 +84,8 @@ class ModelTrainer(ForecasterTrainerInterface):
         test_features = [self._features(r) for r in test_rows]
         test_targets = [r["base_load_kw"] for r in test_rows]
 
-        model, backend = self._try_train_lightgbm(train_features, train_targets)
-        if model is None:
-            model = self._train_linear_regression(train_features, train_targets)
-            backend = "linear_regression"
-
-        if backend == "linear_regression":
-            predictions = [model.predict(f) for f in test_features]
-        else:
-            predictions = list(model.predict(test_features))
-
+        model = self._train_linear_regression(train_features, train_targets)
+        predictions = [model.predict(f) for f in test_features]
         errors = [p - t for p, t in zip(predictions, test_targets)]
         model_rmse = rmse(errors)
         model_mae = mae(errors)
@@ -97,8 +95,11 @@ class ModelTrainer(ForecasterTrainerInterface):
         baseline_rmse = rmse(baseline_errors)
         baseline_mae = mae(baseline_errors)
 
+        trained_at = datetime.now(timezone.utc)
         metrics = {
-            "model_backend": backend,
+            "model_backend": "linear_regression",
+            "model_version": f"linear-{trained_at.strftime('%Y%m%dT%H%M%SZ')}",
+            "feature_names": list(FEATURE_NAMES),
             "n_train": len(train_rows),
             "n_test": len(test_rows),
             "test_rmse_kw": round(model_rmse, 3),
@@ -108,18 +109,20 @@ class ModelTrainer(ForecasterTrainerInterface):
             "rmse_improvement_pct": round(100.0 * (1.0 - model_rmse / baseline_rmse), 1) if baseline_rmse else None,
             "mae_improvement_pct": round(100.0 * (1.0 - model_mae / baseline_mae), 1) if baseline_mae else None,
             "baseline": "reference baseline: previous day's same-slot reading + cooling and occupancy adjustments",
-            "trained_at_unix": time.time(),
+            "trained_at_unix": trained_at.timestamp(),
             "data_path": os.path.relpath(self.data_path, _REPO_ROOT),
+            "data_sha256": self._file_sha256(self.data_path),
             # The forecaster clips inputs to these, so it never extrapolates beyond the training data.
             "feature_ranges": {
                 "outdoor_temp_c": [min(r["outdoor_temp_c"] for r in train_rows), max(r["outdoor_temp_c"] for r in train_rows)],
                 "occupancy_count": [min(r["zone_occupancy_count"] for r in train_rows), max(r["zone_occupancy_count"] for r in train_rows)],
             },
+            "challenger": self._evaluate_lightgbm_challenger(train_features, train_targets, test_features, test_targets),
+            "promoted": bool(baseline_rmse) and model_rmse < baseline_rmse,
         }
 
-        self._save_artifact(model, backend, metrics, output_model_path)
+        metrics["saved_to"] = self._save_artifact(model, metrics, output_model_path)
         return metrics
-
     # ------------------------------------------------------------------
     # Data loading & splitting
     # ------------------------------------------------------------------
@@ -197,19 +200,32 @@ class ModelTrainer(ForecasterTrainerInterface):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _try_train_lightgbm(features: List[List[float]], targets: List[float]):
-        """Returns (model, 'lightgbm') if the ml extras are installed, else (None, None)."""
+    def _evaluate_lightgbm_challenger(train_features, train_targets, test_features, test_targets):
+        """Held-out scores of a LightGBM model on the same split, or None without the ml extras.
+        Reported for comparison only: the runtime cannot serve it, so it is never saved."""
         try:
             import numpy as np
             import lightgbm as lgb
         except ImportError:
-            return None, None
-
-        X = np.array(features)
-        y = np.array(targets)
+            return None
         model = lgb.LGBMRegressor(n_estimators=200, max_depth=6, learning_rate=0.05, verbose=-1)
-        model.fit(X, y)
-        return model, "lightgbm"
+        model.fit(np.array(train_features), np.array(train_targets))
+        errors = [p - t for p, t in zip(model.predict(np.array(test_features)), test_targets)]
+        return {
+            "model_backend": "lightgbm",
+            "test_rmse_kw": round(rmse(errors), 3),
+            "test_mae_kw": round(mae(errors), 3),
+            "served": False,
+            "note": "Evaluated only; forecaster.py serves the linear_regression artifact.",
+        }
+
+    @staticmethod
+    def _file_sha256(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(65536), b""):
+                digest.update(block)
+        return digest.hexdigest()
 
     @staticmethod
     def _train_linear_regression(
@@ -255,30 +271,41 @@ class ModelTrainer(ForecasterTrainerInterface):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _save_artifact(model, backend: str, metrics: Dict[str, Any], output_model_path: str) -> None:
+    def _save_artifact(model: LinearForecastModel, metrics: Dict[str, Any], output_model_path: str) -> str:
+        """Writes the served artifact if the model was promoted (keeping the old one for rollback),
+        else a candidate file beside it. Returns the path written."""
         os.makedirs(os.path.dirname(output_model_path) or ".", exist_ok=True)
+        payload = model.to_dict()
+        payload["model_version"] = metrics["model_version"]
+        payload["metrics"] = metrics
+        payload["feature_ranges"] = metrics["feature_ranges"]
 
         stem = os.path.splitext(output_model_path)[0]
-        if backend == "linear_regression":
-            payload = model.to_dict()
-            payload["metrics"] = metrics
-            payload["feature_ranges"] = metrics["feature_ranges"]
-            with open(stem + ".json", "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+        if not metrics["promoted"]:
+            target = f"{stem}.candidate.json"
+            print(f"Model did not beat the baseline on held-out days; saved as {target}, served model unchanged.")
         else:
-            # Never write a pickle into the .json path: forecaster.py would fail to parse it and
-            # silently fall back to its formula. forecaster.py loads only the JSON linear model.
-            import joblib
-            joblib.dump(model, f"{stem}.{backend}.joblib")
-            with open(f"{stem}.{backend}.metrics.json", "w", encoding="utf-8") as f:
-                json.dump(metrics, f, indent=2)
-            print(
-                f"Saved the {backend} model to {stem}.{backend}.joblib. "
-                "Note: forecaster.py serves only the JSON linear model, which is unchanged."
-            )
+            target = output_model_path
+            if os.path.exists(target):
+                shutil.copyfile(target, f"{stem}.previous.json")
+        tmp = f"{target}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp, target)  # atomic: a running server never reads a half-written file
+        return target
+
+
+def rollback(model_path: str = DEFAULT_MODEL_PATH) -> str:
+    """Restores the artifact that the last promotion replaced."""
+    previous = f"{os.path.splitext(model_path)[0]}.previous.json"
+    if not os.path.exists(previous):
+        raise FileNotFoundError(f"No previous model at {previous} to roll back to.")
+    shutil.copyfile(previous, model_path)
+    return model_path
 
 
 if __name__ == "__main__":
-    trainer = ModelTrainer()
-    result = trainer.train()
-    print(json.dumps(result, indent=2))
+    if "--rollback" in sys.argv:
+        print(f"Restored {rollback()}; restart the API to serve it.")
+    else:
+        print(json.dumps(ModelTrainer().train(), indent=2))

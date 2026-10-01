@@ -42,12 +42,16 @@ class InMemoryAuditLogRepository(AuditLogRepository):
         return [r.model_copy(deep=True) for r in reversed(logs[-limit:])]
 
     def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        return self.get_children_for(log_ids, RECORD_APPROVAL_DECISION)
+
+    def get_children_for(self, log_ids: List[int], record_type: str) -> Dict[int, AuditRecord]:
         wanted = set(log_ids)
+        children: Dict[int, AuditRecord] = {}
         with self._lock:
-            return {
-                r.parent_log_id: r.model_copy(deep=True) for r in self._logs
-                if r.record_type == RECORD_APPROVAL_DECISION and r.parent_log_id in wanted
-            }
+            for r in self._logs:
+                if r.record_type == record_type and r.parent_log_id in wanted:
+                    children.setdefault(r.parent_log_id, r.model_copy(deep=True))
+        return children
 
     def get_by_id(self, log_id: int) -> Optional[AuditRecord]:
         for r in self._logs:
@@ -141,17 +145,23 @@ class PostgresAuditLogRepository(AuditLogRepository):
         return [_row_to_record(r) for r in rows]
 
     def get_decisions_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        return self.get_children_for(log_ids, RECORD_APPROVAL_DECISION)
+
+    def get_children_for(self, log_ids: List[int], record_type: str) -> Dict[int, AuditRecord]:
         if not log_ids:
             return {}
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
                     f"SELECT {_SELECT_COLUMNS} FROM audit_log_store "
-                    "WHERE record_type = :rt AND parent_log_id = ANY(:ids);"
+                    "WHERE record_type = :rt AND parent_log_id = ANY(:ids) ORDER BY log_id;"
                 ),
-                {"rt": RECORD_APPROVAL_DECISION, "ids": list(log_ids)}
+                {"rt": record_type, "ids": list(log_ids)}
             ).fetchall()
-        return {r[9]: _row_to_record(r) for r in rows}
+        children: Dict[int, AuditRecord] = {}
+        for r in rows:
+            children.setdefault(r[9], _row_to_record(r))
+        return children
 
     def get_by_id(self, log_id: int) -> Optional[AuditRecord]:
         with self.engine.connect() as conn:

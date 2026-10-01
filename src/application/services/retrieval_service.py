@@ -18,6 +18,7 @@ from src.domain.interfaces.keyword_search import KeywordSearchEngine
 from src.domain.interfaces.reranker import Reranker
 from src.domain.interfaces.cache import CacheProvider
 from src.domain.entities.rag import DocumentClause
+from src.shared.datetime_utils import campus_today
 
 logger = logging.getLogger("campusgrid.retrieval")
 
@@ -117,6 +118,9 @@ class RetrievalService:
         # and every change bumps the index version so cached search results are never stale.
         self._ingest_lock = threading.Lock()
         self._index_version = 0
+        # Superseded document title (lower-case) -> date its replacement takes effect. From that date
+        # the old document is no longer retrieved; before it, it still is.
+        self._superseded: Dict[str, str] = {}
         self._bootstrap_initial_corpus()
 
     @property
@@ -155,27 +159,47 @@ class RetrievalService:
             logger.warning("Corpus directory '%s' yielded no clauses; indexing the built-in fallback clauses.", self.corpus_dir)
             self.ingestion_pipeline.ingest_clauses([c.model_copy() for c in _FALLBACK_CLAUSES])
 
-    def search(self, query: str, top_k: int = 2) -> Dict[str, Any]:
-        """Executes dense + sparse search, merges with RRF, and returns citations (cached per index version)."""
-        cache_key = f"rag:v{self._index_version}:k{top_k}:{query.strip()}"
+    def register_supersession(self, superseded_title: str, effective_date: str) -> None:
+        """From `effective_date`, clauses of `superseded_title` are no longer retrieved."""
+        with self._ingest_lock:
+            self._superseded[superseded_title.strip().lower()] = effective_date
+            self._index_version += 1
+
+    def in_force(self, clause: DocumentClause, as_of: str) -> bool:
+        """Not yet effective, or replaced by a document already in force -> excluded."""
+        if clause.effective_date and str(clause.effective_date)[:10] > as_of:
+            return False
+        replaced_from = self._superseded.get(clause.source_document.strip().lower())
+        return not (replaced_from and replaced_from <= as_of)
+
+    def search(self, query: str, top_k: int = 2, as_of: Optional[str] = None) -> Dict[str, Any]:
+        """Executes dense + sparse search, merges with RRF, and returns citations (cached per index version).
+
+        Only clauses in force on `as_of` (YYYY-MM-DD, default today on campus) are returned."""
+        as_of = as_of or campus_today().isoformat()
+        cache_key = f"rag:v{self._index_version}:k{top_k}:d{as_of}:{query.strip()}"
         if self.cache is not None:
             hit = self.cache.get(cache_key)
             if hit is not None:
                 return copy.deepcopy(hit)
-        result = self._search_uncached(query, top_k)
+        result = self._search_uncached(query, top_k, as_of)
         if self.cache is not None:
             self.cache.set(cache_key, copy.deepcopy(result), ttl_seconds=self.cache_ttl_seconds)
         return result
 
-    def _search_uncached(self, query: str, top_k: int) -> Dict[str, Any]:
+    def _search_uncached(self, query: str, top_k: int, as_of: str) -> Dict[str, Any]:
+        # Over-fetch so that dropping clauses not in force still leaves 2 * top_k candidates per leg.
+        fetch = top_k * 4
+
         # 1. Dense vector search (skipped when the embeddings carry no meaning)
         dense_candidates: List[DocumentClause] = []
         if self.dense_enabled:
             query_vec = self.embedding_provider.embed_text(query)
-            dense_candidates = [r.clause for r in self.vector_store.similarity_search(query_vec, top_k=top_k * 2)]
+            dense_candidates = [r.clause for r in self.vector_store.similarity_search(query_vec, top_k=fetch)]
+        dense_candidates = [c for c in dense_candidates if self.in_force(c, as_of)][: top_k * 2]
 
         # 2. Sparse BM25 search
-        sparse_candidates = [c for c, _ in self.keyword_engine.search(query, top_k=top_k * 2)]
+        sparse_candidates = [c for c, _ in self.keyword_engine.search(query, top_k=fetch) if self.in_force(c, as_of)][: top_k * 2]
 
         # 3. Fusion
         ranked_lists = [dense_candidates, sparse_candidates] if dense_candidates else [sparse_candidates]
@@ -210,21 +234,31 @@ class RetrievalService:
             "citations": citations,
             "candidates_count": len(dense_candidates) + len(sparse_candidates),
             "dense_search_enabled": bool(dense_candidates) or self.dense_enabled,
+            "as_of": as_of,
         }
 
     def ingest_raw_document(
         self,
         text: str,
         source_document: str = "Regulatory Document",
-        effective_date: str = "2024-01-01"
+        effective_date: str = "2024-01-01",
+        force_source: bool = False,
     ) -> Dict[str, Any]:
         """Ingests a raw policy text or markdown snippet into the active vector and keyword stores."""
         with self._ingest_lock:
             result = self.ingestion_pipeline.ingest_raw_text(
                 text=text,
                 source_document=source_document,
-                effective_date=effective_date
+                effective_date=effective_date,
+                force_source=force_source,
             )
+            self._index_version += 1
+        return result
+
+    def ingest_clauses(self, clauses: List[DocumentClause]) -> Dict[str, Any]:
+        """Indexes already-parsed clauses (screened and de-duplicated like any other source)."""
+        with self._ingest_lock:
+            result = self.ingestion_pipeline.ingest_clauses(clauses)
             self._index_version += 1
         return result
 

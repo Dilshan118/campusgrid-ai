@@ -230,6 +230,14 @@ export function describeError(error) {
     return { title: step ? `The ${step} step could not finish.` : 'The planning pipeline could not finish.', body: 'Your question is kept — try again in a moment.' };
   }
   if (code === 'WORKFLOW_CONFLICT' || code === 'ENTITY_NOT_FOUND') return { title: error.message };
+  if (code === 'TIMETABLE_INVALID') {
+    const rows = (error.details?.errors || []).slice(0, 5).map((e) => `Line ${e.line}: ${e.message}`);
+    return { title: error.message, body: rows.join(' · ') || undefined };
+  }
+  if (code === 'REGULATION_REJECTED_BY_SCREENING') {
+    const rejected = (error.details?.screening?.rejected_clauses || []).map((r) => `${r.clause_reference}: ${r.reason}`);
+    return { title: error.message, body: rejected.join(' · ') || undefined };
+  }
   if (code === 'MALICIOUS_INPUT_DETECTED') return { title: 'The request contained characters that are not allowed.', body: error.details?.reason };
   return { title: 'Something went wrong on our side.' };
 }

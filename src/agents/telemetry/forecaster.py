@@ -15,6 +15,7 @@ Two prediction paths:
   NotImplementedError and the system keeps working before training has happened.
 """
 
+import logging
 import os
 from typing import List, Dict, Any, Optional
 from statistics import pstdev
@@ -22,10 +23,13 @@ from statistics import pstdev
 from src.domain.entities.telemetry import TelemetryInterval, PowerForecast
 from src.domain.interfaces.forecaster import DemandForecasterInterface
 from src.agents.telemetry.model_utils import (
+    FEATURE_NAMES,
     build_feature_vector,
     linear_predict,
     load_model_artifact,
 )
+
+logger = logging.getLogger("campusgrid.agents.telemetry")
 
 # Next to this file, so the trained model is found whatever directory the server starts from.
 DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_forecaster.json")
@@ -45,7 +49,22 @@ class DemandForecaster(DemandForecasterInterface):
     def __init__(self, model_version: str = "v4.2-member2-forecaster", model_path: str = DEFAULT_MODEL_PATH):
         self.model_version = model_version
         self.model_path = model_path
-        self._model_artifact: Optional[Dict[str, Any]] = load_model_artifact(model_path)
+        self._model_artifact: Optional[Dict[str, Any]] = self._compatible(load_model_artifact(model_path))
+
+    @staticmethod
+    def _compatible(artifact: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """An artifact is served only if it is the model type and feature schema this code computes;
+        anything else (e.g. trained on a different feature set) would give silently wrong numbers."""
+        if not artifact:
+            return None
+        if artifact.get("model_type") != "linear_regression" or artifact.get("feature_names", FEATURE_NAMES) != FEATURE_NAMES:
+            logger.warning(
+                "Ignoring forecast model artifact (type %s, features %s): the forecaster serves linear_regression "
+                "over %s. Using the statistical fallback; retrain with train_forecaster.py.",
+                artifact.get("model_type"), artifact.get("feature_names"), FEATURE_NAMES,
+            )
+            return None
+        return artifact
 
     def predict(
         self,
@@ -90,7 +109,7 @@ class DemandForecaster(DemandForecasterInterface):
                 anomalies.append(idx)
 
         model_version = (
-            f"{self.model_version}-{self._model_artifact.get('model_type', 'unknown')}"
+            f"{self.model_version}-{self._model_artifact.get('model_version') or self._model_artifact['model_type']}"
             if self._model_artifact
             else f"{self.model_version}-statistical-fallback"
         )
@@ -114,7 +133,7 @@ class DemandForecaster(DemandForecasterInterface):
         return min(max(temp, t_low), t_high), min(max(occ, o_low), o_high)
 
     def _predict_demand(self, time_slot: str, temp: float, occ: float, fallback_base_kw: float) -> float:
-        if self._model_artifact and self._model_artifact.get("model_type") == "linear_regression":
+        if self._model_artifact:
             temp, occ = self._clip_to_training_range(temp, occ)
             feature_vector = build_feature_vector(time_slot, temp, occ)
             return max(

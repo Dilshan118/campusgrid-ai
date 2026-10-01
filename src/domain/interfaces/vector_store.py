@@ -3,10 +3,45 @@ CampusGrid AI: Abstract Vector Store Interface
 Contract for storing and retrieving document vectors (pgvector, ChromaDB, in-memory, Qdrant).
 """
 
+import math
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from src.domain.entities.rag import DocumentClause
+from src.domain.exceptions.base import VectorStoreException
+
+# No embedding model in use is anywhere near this; anything longer is malformed or hostile input.
+MAX_VECTOR_DIMENSION = 8192
+
+
+def validate_vector(vector: Any, expected_dimension: Optional[int], provider_name: str) -> List[float]:
+    """Rejects a vector that is empty, too long, not all finite numbers, or not of the store's size.
+
+    Every adapter calls this at its boundary, so a malformed query fails loudly instead of being
+    scored as "similarity 0.0" (indistinguishable from a genuine no-match) or burning CPU on an
+    oversized input."""
+    if not isinstance(vector, (list, tuple)) or not vector:
+        raise VectorStoreException("Vector must be a non-empty list of numbers.", provider_name=provider_name)
+    if len(vector) > MAX_VECTOR_DIMENSION:
+        raise VectorStoreException(
+            f"Vector has {len(vector)} dimensions; the maximum accepted is {MAX_VECTOR_DIMENSION}.",
+            provider_name=provider_name,
+            details={"dimension": len(vector)},
+        )
+    if expected_dimension is not None and len(vector) != expected_dimension:
+        raise VectorStoreException(
+            f"Vector has {len(vector)} dimensions but the store holds {expected_dimension}-dimensional "
+            "embeddings. Re-index the corpus after changing the embedding model.",
+            provider_name=provider_name,
+            details={"dimension": len(vector), "expected_dimension": expected_dimension},
+        )
+    try:
+        values = [float(x) for x in vector]
+    except (TypeError, ValueError):
+        raise VectorStoreException("Vector contains a non-numeric value.", provider_name=provider_name)
+    if not all(math.isfinite(x) for x in values):
+        raise VectorStoreException("Vector contains NaN or infinite values.", provider_name=provider_name)
+    return values
 
 class VectorSearchResult(BaseModel):
     """Result of vector similarity search."""

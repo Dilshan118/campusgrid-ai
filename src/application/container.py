@@ -44,6 +44,8 @@ from src.pipelines.document_ingestion.ingest_corpus import DocumentIngestionPipe
 from src.application.services.retrieval_service import RetrievalService
 from src.application.services.audit_service import AuditService
 from src.application.services.analytics_service import AnalyticsService
+from src.application.services.timetable_service import TimetableService
+from src.application.services.regulation_review_service import RegulationReviewService
 from src.agents.telemetry.agent import TelemetryForecastingAgent
 from src.agents.digital_twin.agent import DigitalTwinAgent
 from src.agents.policy_rag.agent import PolicyRAGAgent
@@ -141,6 +143,7 @@ class Container:
             self.audit_repo = InMemoryAuditLogRepository()
             self.analytics_repo = InMemoryAnalyticsEventRepository()
             self.vector_store = VectorStoreFactory.create(self.settings.vector_store)
+        self._check_vector_dimension()
 
         # 3. Tools & MCP Platform
         if (self.settings.weather.provider or "").lower() != "open-meteo":
@@ -174,6 +177,13 @@ class Container:
         )
         self.audit_service = AuditService(audit_repo=self.audit_repo)
         self.analytics_service = AnalyticsService(event_repo=self.analytics_repo)
+        self.regulation_review_service = RegulationReviewService(
+            retrieval_service=self.retrieval_service, audit_service=self.audit_service,
+        )
+        self.regulation_review_service.replay_approved()
+        self.timetable_service = TimetableService(
+            timetable_repo=self.timetable_repo, room_repo=self.room_repo, audit_service=self.audit_service,
+        )
 
         # 5. Specialized Domain Agents
         # Each of agents 1, 2 and 4 runs member code unless it is listed in the baseline set
@@ -267,6 +277,7 @@ class Container:
                 "max_soc_kwh": physics.battery_capacity_kwh * physics.battery_max_soc,
                 "max_power_kw": physics.battery_max_power_kw,
             },
+            load_flexibility=self.settings.load_flexibility.model_dump(),
         )
 
     def nlp_parser_rooms(self) -> List[Dict[str, Any]]:
@@ -275,6 +286,26 @@ class Container:
             {k: room.get(k) for k in ("room_id", "building_name", "room_type", "max_capacity")}
             for room in self.nlp_parser.rooms.values()
         ]
+
+    def _check_vector_dimension(self) -> None:
+        """Names the fix when the embedding model and the pgvector column disagree; without this the
+        first insert or search fails with a raw database error."""
+        column_dimension = getattr(self.vector_store, "column_dimension", None)
+        if column_dimension is None:
+            return
+        try:
+            stored = column_dimension()
+        except Exception as exc:  # database unreachable or not yet created: checked again per call
+            logger.warning("Could not read the pgvector column size (%s).", type(exc).__name__)
+            return
+        produced = self.embedding_provider.dimension
+        if stored is not None and stored != produced:
+            logger.error(
+                "Embedding provider %s produces %d-dimensional vectors but document_clauses.embedding is vector(%d). "
+                "Every regulation insert and search will be rejected until EMBEDDING_DIMENSION/the model or the "
+                "column is changed and the corpus re-indexed.",
+                type(self.embedding_provider).__name__, produced, stored,
+            )
 
     def _room_inventory(self) -> Optional[List[Dict[str, Any]]]:
         try:

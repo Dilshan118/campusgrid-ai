@@ -493,9 +493,16 @@ class DigitalTwinAgent(BaseAgent):
             if solver_soc and len(solver_soc) == len(charge) else None
         )
 
+        # The twin re-rounds every step to 0.01 kWh, so a plan that parks the battery exactly on its
+        # limit (e.g. 450.00 kWh) simulates as 450.01. Judge the band with the same rounding slack
+        # used for solver agreement, or every plan that rides a limit is flagged.
+        soc_low = plan_battery.capacity_kwh * plan_battery.min_soc_pct - _SOC_AGREEMENT_TOLERANCE_KWH
+        soc_high = plan_battery.capacity_kwh * plan_battery.max_soc_pct + _SOC_AGREEMENT_TOLERANCE_KWH
+        soc_violations = sum(1 for x in sim["battery_soc_trajectory_kwh"] if x < soc_low or x > soc_high)
+
         reasons: List[str] = []
-        if sim["battery_soc_violations_count"]:
-            reasons.append(f"Battery leaves its state-of-charge band in {sim['battery_soc_violations_count']} interval(s).")
+        if soc_violations:
+            reasons.append(f"Battery leaves its state-of-charge band in {soc_violations} interval(s).")
         if over_charge:
             reasons.append(f"Charging exceeds {max_charge_kw:g} kW in {len(over_charge)} interval(s).")
         if over_discharge:
@@ -535,7 +542,7 @@ class DigitalTwinAgent(BaseAgent):
             "checks": {
                 "is_thermal_feasible": comfort_ok,
                 "comfort_fixable_by_hvac": comfort_fixable,
-                "battery_soc_violations": sim["battery_soc_violations_count"],
+                "battery_soc_violations": soc_violations,
                 "charge_limit_breaches": len(over_charge),
                 "discharge_limit_breaches": len(over_discharge),
                 "simultaneous_charge_discharge": len(simultaneous),

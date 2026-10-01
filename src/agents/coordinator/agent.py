@@ -43,6 +43,13 @@ from src.domain.entities.audit import (
 from src.domain.exceptions.base import DomainException
 from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C
 from src.shared.datetime_utils import build_tou_tariff_profile
+from src.agents.coordinator.load_tiers import build_tier_profiles, scaled_hvac_schedule
+
+# The optimizer's demand intervals are 30 minutes; PUCSL bills the highest 15 minutes.
+DEMAND_INTERVAL_NOTE = (
+    "Demand is forecast in 30-minute intervals; the utility bills the highest 15-minute demand, "
+    "which can be higher than a half-hour average."
+)
 
 # Shared by every orchestrator instance: Agent 3 runs here while Agents 1 and 2 run on the request thread.
 _PARALLEL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cg-agent")
@@ -89,6 +96,7 @@ class CampusGridOrchestrator(BaseAgent):
         battery_limits: Optional[Dict[str, float]] = None,
         parallel_agents: bool = True,
         agent3_timeout_seconds: float = 60.0,
+        load_flexibility: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             name="Central Orchestrator",
@@ -107,6 +115,11 @@ class CampusGridOrchestrator(BaseAgent):
         self.battery_limits = battery_limits or {}
         self.parallel_agents = parallel_agents
         self.agent3_timeout_seconds = agent3_timeout_seconds
+        # Site defaults for the load-tier split (settings.load_flexibility); none = battery-only plans.
+        self.load_flexibility = {
+            "hvac_load_share": 0.0, "hvac_flex_ratio": 0.0, "power_factor": None, "max_grid_import_kw": None,
+            **(load_flexibility or {}),
+        }
 
     # ------------------------------------------------------------------
 
@@ -126,6 +139,7 @@ class CampusGridOrchestrator(BaseAgent):
             "session_id": session_id,
             "parsed": parsed,
             "battery_parameters": input_data.get("battery_parameters") or {},
+            "load_parameters": input_data.get("load_parameters") or {},
         }
         action = parsed["action"]
 
@@ -138,7 +152,7 @@ class CampusGridOrchestrator(BaseAgent):
         # dispatch plan it runs concurrently with Agents 1 -> 2. Agent 4 waits for all three.
         a3_future: Optional[Future] = None
         if action == ACTION_OPTIMIZE_DISPATCH:
-            a3_future = self._start_agent3(user_query)
+            a3_future = self._start_agent3(user_query, parsed.get("date"))
 
         a1_res = self.agent1.execute({
             "date": parsed["date"],
@@ -157,7 +171,7 @@ class CampusGridOrchestrator(BaseAgent):
                 f"Occupancy was capped at {parsed['room']}'s capacity ({capacity}) for {capped} half-hours; "
                 "the forecast's headcounts are campus-wide."
             )
-        a2_res = self.agent2.execute({
+        twin_input = {
             "initial_temp_c": parsed.get("target_temp_c", 24.0),
             "target_setpoint_c": parsed.get("target_temp_c", 24.0),
             "ambient_temperatures_c": a1_res.data.get("ambient_temperatures_c", []),
@@ -167,7 +181,9 @@ class CampusGridOrchestrator(BaseAgent):
             "perturb_occ_multiplier": self._override(input_data, parsed, "perturb_occ_multiplier", 1.0),
             "comfort_min_c": self.comfort_min_c,
             "comfort_max_c": self.comfort_max_c,
-        })
+        }
+        context["twin_input"] = twin_input
+        a2_res = self.agent2.execute(twin_input)
         if not a2_res.success:
             raise AgentPipelineError("Agent 2 (Digital Twin Simulation)", a2_res.error)
 
@@ -260,15 +276,16 @@ class CampusGridOrchestrator(BaseAgent):
             digital_twin_feasibility=a2_res.data,
         )
 
-    def _start_agent3(self, query: str) -> Optional[Future]:
+    def _start_agent3(self, query: str, plan_date: Optional[str] = None) -> Optional[Future]:
         if not self.parallel_agents:
             return None
         run_in_context = contextvars.copy_context().run  # keeps the request ID in Agent 3's trace logs
-        return _PARALLEL_POOL.submit(run_in_context, self.agent3.execute, self._agent3_dispatch_input(query))
+        return _PARALLEL_POOL.submit(run_in_context, self.agent3.execute, self._agent3_dispatch_input(query, plan_date))
 
     @staticmethod
-    def _agent3_dispatch_input(query: str) -> Dict[str, Any]:
-        return {"query": query, "top_k": 2, "include_tariff_constraints": True}
+    def _agent3_dispatch_input(query: str, plan_date: Optional[str] = None) -> Dict[str, Any]:
+        # The tariff in force on the plan's own day, not today's.
+        return {"query": query, "top_k": 2, "include_tariff_constraints": True, "as_of_date": plan_date}
 
     def _handle_dispatch(self, ctx: Dict[str, Any], a1_res, a2_res, a3_future: Optional[Future] = None) -> Dict[str, Any]:
         parsed = ctx["parsed"]
@@ -282,7 +299,7 @@ class CampusGridOrchestrator(BaseAgent):
                     f"no answer within {self.agent3_timeout_seconds:g} seconds",
                 )
         else:
-            a3_res = self.agent3.execute(self._agent3_dispatch_input(ctx["query"]))
+            a3_res = self.agent3.execute(self._agent3_dispatch_input(ctx["query"], parsed.get("date")))
         if not a3_res.success:
             raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
@@ -309,7 +326,7 @@ class CampusGridOrchestrator(BaseAgent):
             "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
         }
 
-        a4_res = self.agent4.execute({
+        agent4_input = {
             "time_slots": time_slots,
             "forecast_demand_kw": a1_res.data.get("forecast_demand_kw", []),
             "forecast_solar_kw": a1_res.data.get("forecast_solar_kw", []),
@@ -320,9 +337,9 @@ class CampusGridOrchestrator(BaseAgent):
             "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
             "tariff_summary": tariff_summary,
             **ctx["battery_parameters"],
-        })
-        if not a4_res.success:
-            raise AgentPipelineError("Agent 4 (Dispatch & Explanation)", a4_res.error)
+            **self._load_inputs(ctx, a1_res.data),
+        }
+        a4_res, flexibility = self._solve_and_verify(ctx, a2_res, agent4_input)
 
         tariff_inputs = {
             "rates_lkr_kwh": rates,
@@ -332,6 +349,15 @@ class CampusGridOrchestrator(BaseAgent):
             "source_clauses": rules.get("source_clauses", {}),
         }
         warnings = self._dispatch_warnings(parsed, rules, thermal_feasible, comfort_violations, a4_res.data)
+        verification = flexibility.get("verification") or {}
+        if verification.get("verdict") not in (None, "accept"):
+            warnings.append(
+                "Post-solve digital-twin check did not accept the final schedule ("
+                + verification["verdict"].replace("_", "-") + "): " + " ".join(verification.get("reasons") or [])
+            )
+        for note in flexibility.get("notes", []):
+            parsed.setdefault("notes", []).append(note)
+        parsed.setdefault("notes", []).append(DEMAND_INTERVAL_NOTE)
 
         final_decision = {
             "solver_summary": a4_res.data.get("solver_output", {}),
@@ -355,6 +381,9 @@ class CampusGridOrchestrator(BaseAgent):
             },
             "forecast_summary": a1_res.data.get("forecast_summary"),
             "warnings": warnings,
+            "load_flexibility": {k: v for k, v in flexibility.items() if k not in ("verification", "notes")},
+            "post_solve_verification": verification or None,
+            "data_sources": a1_res.data.get("data_sources"),
         }
         # Stored with the plan so a reviewer can render it from the audit record alone.
         final_decision["explanation_concise"] = self._concise_explanation(final_decision["solver_summary"])
@@ -391,6 +420,80 @@ class CampusGridOrchestrator(BaseAgent):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _load_inputs(self, ctx: Dict[str, Any], forecast: Dict[str, Any]) -> Dict[str, Any]:
+        """Tier split, grid limit and demand-charge inputs for Agent 4 (form values over site settings)."""
+        form = ctx["load_parameters"]
+        site = self.load_flexibility
+        flex = form.get("hvac_flex_ratio")
+        flex = site["hvac_flex_ratio"] if flex is None else float(flex)
+        share = site["hvac_load_share"] if flex > 0 else 0.0
+        tiers = build_tier_profiles(
+            forecast.get("forecast_demand_kw", []), forecast.get("time_slots", []), share,
+            float(form.get("shiftable_load_kw") or 0.0), float(form.get("shiftable_hours") or 0.0),
+            form.get("shiftable_usual_start") or "08:00",
+        )
+        inputs: Dict[str, Any] = {}
+        if tiers is not None:
+            ctx["tier_notes"] = tiers.pop("notes")
+            inputs.update(tiers, tier1_max_reduction_ratio=flex)
+        for key, value in (
+            ("power_factor", form.get("power_factor") or site.get("power_factor")),
+            ("month_to_date_peak_kva", form.get("month_to_date_peak_kva")),
+            ("max_grid_import_kw", site.get("max_grid_import_kw")),
+        ):
+            if value is not None:
+                inputs[key] = value
+        return inputs
+
+    def _solve_and_verify(self, ctx: Dict[str, Any], a2_res, agent4_input: Dict[str, Any]):
+        """Agent 4, then the digital twin re-simulates the schedule it produced (battery plus the room's
+        air-conditioning as the plan shifted it). If shifting air-conditioning breaks comfort, the plan is
+        solved again with HVAC held at the thermostat schedule and verified again."""
+        a4_res = self._run_agent4(agent4_input)
+        notes = list(ctx.get("tier_notes") or [])
+        info: Dict[str, Any] = {
+            "hvac_flex_ratio": agent4_input.get("tier1_max_reduction_ratio", 0.0),
+            "tiers_enforced": a4_res.data.get("solver_output", {}).get("served_tier1_kw") is not None,
+            "hvac_flex_withdrawn": False,
+        }
+        verification = self._verify(ctx, a2_res, agent4_input, a4_res)
+        comfort_broken = (verification or {}).get("checks", {}).get("is_thermal_feasible") is False
+        if comfort_broken and info["tiers_enforced"] and info["hvac_flex_ratio"] > 0:
+            retry_input = {**agent4_input, "tier1_max_reduction_ratio": 0.0}
+            retry = self._run_agent4(retry_input)
+            retry_verification = self._verify(ctx, a2_res, retry_input, retry)
+            notes.append(
+                "Shifting air-conditioning broke the comfort check ("
+                + " ".join(verification.get("reasons") or []) + "); the plan was re-solved with HVAC flexibility off."
+            )
+            a4_res, verification = retry, retry_verification
+            info.update(hvac_flex_withdrawn=True, hvac_flex_ratio=0.0)
+        info["verification"] = verification
+        info["notes"] = notes
+        return a4_res, info
+
+    def _run_agent4(self, agent4_input: Dict[str, Any]):
+        a4_res = self.agent4.execute(agent4_input)
+        if not a4_res.success:
+            raise AgentPipelineError("Agent 4 (Dispatch & Explanation)", a4_res.error)
+        return a4_res
+
+    def _verify(self, ctx: Dict[str, Any], a2_res, agent4_input: Dict[str, Any], a4_res) -> Optional[Dict[str, Any]]:
+        verify = getattr(self.agent2, "verify_dispatch_plan", None)
+        twin_input = ctx.get("twin_input")
+        if not callable(verify) or twin_input is None:
+            return None
+        solver = dict(a4_res.data.get("solver_output") or {})
+        served = solver.get("served_tier1_kw")
+        planned = agent4_input.get("tier1_load_kw")
+        if served is not None and planned and agent4_input.get("tier1_max_reduction_ratio", 0) > 0:
+            solver["hvac_power_kw"] = scaled_hvac_schedule(a2_res.data.get("hvac_power_kw") or [], planned, served)
+        else:
+            solver.pop("hvac_power_kw", None)
+        result = verify(twin_input, {"solver_output": solver, "battery_parameters": a4_res.data.get("battery_parameters")})
+        # The simulated series are large and the plan already stores its schedule; keep the verdict.
+        return {k: v for k, v in result.items() if k != "simulation"}
+
     def room_level_occupancy(self, room_id: str, counts: List[int]):
         """Hand-off check between Agent 1 and Agent 2: the digital twin simulates ONE room, but the
         forecast's headcounts can be campus-wide. Counts above the room's capacity are capped.
@@ -426,16 +529,6 @@ class CampusGridOrchestrator(BaseAgent):
             "max_charge_kw": float(params["max_charge_rate_kw"]),
             "max_discharge_kw": float(params["max_discharge_rate_kw"]),
         }
-        # Stored with the plan so a reviewer can render it from the audit record alone.
-        final_decision["explanation_concise"] = self._concise_explanation(final_decision["solver_summary"])
-        final_decision["citations"] = citations
-        final_decision["battery_limits"] = self.battery_limits
-        final_decision["assumptions"] = list(parsed.get("notes", []))
-        demand = a1_res.data.get("forecast_demand_kw", [])
-        solar = a1_res.data.get("forecast_solar_kw", [])
-        final_decision["baseline_grid_kw"] = [
-            round(max(0.0, d - (solar[i] if i < len(solar) else 0.0)), 1) for i, d in enumerate(demand)
-        ]
 
     @staticmethod
     def _concise_explanation(solver: Dict[str, Any]) -> Optional[str]:

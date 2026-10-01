@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, BookOpen, CheckCircle2, ClipboardCheck, MessageSquare, ShieldCheck, Thermometer, TriangleAlert, XCircle } from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, ClipboardCheck, HardHat, MessageSquare, ShieldCheck, Thermometer, TriangleAlert, XCircle } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useAsync } from '../lib/hooks';
@@ -13,7 +13,10 @@ export default function OverviewPage() {
   return (
     <div>
       <PageHeader title={`Good ${greeting()}`} description="What needs attention today." />
-      {can('orchestrator:query') ? <PlannerOverview /> : <AuditorOverview />}
+      {can('orchestrator:query') ? <PlannerOverview />
+        : can('execution:report') ? <WorksOverview />
+          : can('analytics:read') ? <AuditorOverview />
+            : <TimetableOverview />}
     </div>
   );
 }
@@ -98,6 +101,52 @@ function PlannerOverview() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function WorksOverview() {
+  const approved = useAsync(() => api.auditLogs({ record_type: 'dispatch_recommendation', status: 'approved', limit: 50 }), []);
+  const rows = approved.data || [];
+  const waiting = rows.filter((r) => !r.execution);
+  return (
+    <div className="space-y-6">
+      <Card title="Approved plans to carry out" description="Carry each schedule out through the BMS, then record what was done on the plan."
+        actions={<Button size="sm" variant="secondary" icon={ArrowRight} onClick={() => navigate('/plans')}>All plans</Button>} bodyClassName="p-0">
+        {approved.error ? <div className="p-4"><ErrorPanel error={approved.error} onRetry={approved.reload} /></div>
+          : approved.loading && !approved.data ? <LoadingBlock /> : !waiting.length ? (
+            <EmptyState icon={HardHat} title="Nothing waiting.">Every approved plan has an execution report.</EmptyState>
+          ) : (
+            <ul className="divide-y divide-line">
+              {waiting.map((r) => (
+                <li key={r.log_id}>
+                  <button type="button" onClick={() => navigate(`/plans/${r.log_id}`)} className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left hover:bg-surface-2">
+                    <span className="text-sm font-medium text-ink">Plan #{r.log_id} · {r.final_decision?.target?.room} · {formatDate(r.final_decision?.target?.date)}</span>
+                    <span className="shrink-0 text-xs text-ink-2">approved by {r.decision?.decided_by} · {formatDateTime(r.decision?.decided_at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+      </Card>
+    </div>
+  );
+}
+
+function TimetableOverview() {
+  const timetable = useAsync(() => api.timetable(), []);
+  const entries = timetable.data?.entries || [];
+  return (
+    <Card title="Teaching timetable" actions={<Button size="sm" icon={CalendarDays} onClick={() => navigate('/timetable')}>Open timetable</Button>}>
+      {timetable.error ? <ErrorPanel error={timetable.error} onRetry={timetable.reload} /> : timetable.loading && !timetable.data ? <LoadingBlock /> : (
+        <>
+          <p className="text-5xl font-semibold text-ink">{entries.length}</p>
+          <p className="mt-1 text-sm text-ink-2">
+            weekly sessions in {new Set(entries.map((e) => e.room_id)).size} rooms
+            {timetable.data?.source === 'seed' ? ' — still the built-in demo sessions; upload this semester’s timetable.' : '.'}
+          </p>
+        </>
+      )}
+    </Card>
   );
 }
 

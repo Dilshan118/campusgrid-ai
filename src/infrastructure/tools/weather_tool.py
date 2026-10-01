@@ -74,7 +74,9 @@ class WeatherTool(Tool):
         cached = self._get_cached(cache_key)
         if cached is not None:
             elapsed = (time.time() - start_time) * 1000.0
-            return ToolResult(success=True, data={**cached, "source": "cache"}, execution_time_ms=elapsed)
+            # `origin_source` keeps a cached offline curve distinguishable from cached live data.
+            return ToolResult(success=True, data={**cached, "source": "cache", "origin_source": cached["source"]},
+                              execution_time_ms=elapsed)
 
         temperatures, source = self._fetch_temperatures(date_str)
         elapsed = (time.time() - start_time) * 1000.0

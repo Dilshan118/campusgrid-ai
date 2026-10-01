@@ -1,19 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, FileText, Hourglass, Info, Printer, RotateCcw, ThumbsDown, ThumbsUp, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, Download, FileText, HardHat, Hourglass, Info, Printer, RotateCcw, ThumbsDown, ThumbsUp, TriangleAlert } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { analytics } from '../lib/analytics';
 import { announcePlansChanged, useAsync, useDraft, useNow } from '../lib/hooks';
 import { buildPath, navigate } from '../lib/router';
 import {
-  expiresIn, formatDate, formatDateTime, formatKw, formatLKR, formatNumber, utcTitle,
+  EXECUTION_OUTCOME_LABELS, expiresIn, formatDate, formatDateTime, formatKw, formatLKR, formatNumber, utcTitle,
 } from '../lib/format';
 import { BatteryLevelChart, BatteryPowerChart, GridImportChart } from '../components/charts';
 import { CardSkeleton, useToast } from '../components/feedback';
 import { ClauseCard, Explanation, PlanNumbers, VerificationBadge, WarningsPanel, useRecommendationShown } from '../components/plan';
 import {
   Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Dialog, EmptyState, ErrorPanel, Field,
-  PageHeader, StatusPill, Textarea,
+  PageHeader, Select, StatusPill, Textarea, TextInput,
 } from '../components/ui';
 
 const TARIFF_ROWS = [
@@ -146,6 +146,7 @@ function PlanReview({ record, reload }) {
           )}
           <TariffInputs tariff={decision.tariff_inputs} citations={citations} onOpen={openClause} />
           <ComfortCheck feasibility={decision.thermal_feasibility} />
+          <PlanChecks decision={decision} solver={solver} />
           {decision.forecast_summary && (
             <div>
               <h3 className="mb-1 text-sm font-semibold text-ink">Forecast summary</h3>
@@ -329,7 +330,7 @@ function DecisionPanel({ record, decision, status, expired, canApprove, canRerun
         {error && <ErrorPanel error={error} />}
 
         {(justDecided || decided) && (
-          <DecidedView record={record} decided={decided || justDecided} decision={decision} fresh={Boolean(justDecided)} />
+          <DecidedView record={record} decided={decided || justDecided} decision={decision} fresh={Boolean(justDecided)} onChanged={onChanged} />
         )}
 
         {!decided && !justDecided && (status === 'expired' || expired) && (
@@ -378,7 +379,7 @@ function DecisionPanel({ record, decision, status, expired, canApprove, canRerun
   );
 }
 
-function DecidedView({ record, decided, decision, fresh }) {
+function DecidedView({ record, decided, decision, fresh, onChanged }) {
   const approved = (decided.status || decided.decision) === 'approved';
   return (
     <div className="space-y-3">
@@ -390,7 +391,141 @@ function DecidedView({ record, decided, decision, fresh }) {
       {approved && (
         <Button variant="secondary" icon={Download} onClick={() => downloadChecklist(record, decided, decision)}>Download execution checklist</Button>
       )}
+      {approved && <ExecutionPanel record={record} onChanged={onChanged} />}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Checks run on the plan after solving, and the load tiers it used
+// ---------------------------------------------------------------------------
+
+const VERDICT_TEXT = {
+  accept: 'The digital twin re-simulated the final schedule: battery limits and room comfort hold.',
+  re_optimize: 'The digital twin did not accept the final schedule.',
+  reject: 'The digital twin could not hold comfort on this day with any schedule.',
+};
+
+function CheckLine({ ok, children }) {
+  const Icon = ok === undefined ? Info : ok ? CheckCircle2 : TriangleAlert;
+  const tone = ok === undefined ? 'text-ink-2' : ok ? 'text-good-text' : 'text-warn-text';
+  return <li className="flex items-start gap-1.5"><Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone}`} aria-hidden /><span>{children}</span></li>;
+}
+
+function PlanChecks({ decision, solver }) {
+  const flex = decision.load_flexibility;
+  const verification = decision.post_solve_verification;
+  const arithmetic = solver.post_solve_checks;
+  if (!flex && !verification && !arithmetic && !solver.demand_charge_basis) return null;
+  const slots = solver.time_slots || [];
+  const shifted = (solver.served_tier2_kw || []).map((kw, i) => ({ kw, slot: slots[i] })).filter((x) => x.kw > 0.5);
+  return (
+    <div>
+      <h3 className="mb-1 text-sm font-semibold text-ink">Checks after solving</h3>
+      <ul className="space-y-1 text-sm text-ink-2">
+        {arithmetic && (
+          <CheckLine ok={arithmetic.passed}>
+            Every constraint re-checked from the published numbers ({arithmetic.checked_intervals} half-hours)
+            {arithmetic.passed ? '.' : `: ${arithmetic.failures.join('; ')}`}
+          </CheckLine>
+        )}
+        {verification && (
+          <CheckLine ok={verification.verdict === 'accept'}>
+            {VERDICT_TEXT[verification.verdict] || verification.verdict} {(verification.reasons || []).join(' ')}
+          </CheckLine>
+        )}
+        {flex?.tiers_enforced && (
+          <CheckLine>
+            Critical (Tier 0) load was never curtailed. Air-conditioning flexibility:{' '}
+            {flex.hvac_flex_ratio ? `±${Math.round(flex.hvac_flex_ratio * 100)}% per half-hour` : 'off'}
+            {flex.hvac_flex_withdrawn ? ' (withdrawn after it broke the comfort check)' : ''}.
+          </CheckLine>
+        )}
+        {shifted.length > 0 && (
+          <CheckLine>
+            Shiftable equipment runs at {shifted.slice(0, 8).map((x) => `${x.slot} (${Math.round(x.kw)} kW)`).join(', ')}
+            {shifted.length > 8 ? ` and ${shifted.length - 8} more half-hours` : ''}.
+          </CheckLine>
+        )}
+        {solver.demand_charge_basis && <CheckLine>Demand charge: {solver.demand_charge_basis}.</CheckLine>}
+      </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Execution report (Works Division): what was actually carried out on site
+// ---------------------------------------------------------------------------
+
+function ExecutionPanel({ record, onChanged }) {
+  const { can } = useAuth();
+  const { notify } = useToast();
+  const [outcome, setOutcome] = useState('completed');
+  const [executedOn, setExecutedOn] = useState(record.final_decision?.target?.date || '');
+  const [notes, setNotes] = useState('');
+  const [deviations, setDeviations] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const execution = record.execution;
+
+  if (execution) {
+    return (
+      <Banner tone={execution.outcome === 'completed' ? 'success' : 'warning'} icon={HardHat}
+        title={`${EXECUTION_OUTCOME_LABELS[execution.outcome] || execution.outcome} · reported by ${execution.reported_by} · ${formatDateTime(execution.reported_at)}`}>
+        {execution.executed_on && <p>Carried out on {formatDate(execution.executed_on)}.</p>}
+        {execution.deviations && <p>Differences from the plan: {execution.deviations}</p>}
+        {execution.notes && <p>“{execution.notes}”</p>}
+      </Banner>
+    );
+  }
+  if (!can('execution:report')) {
+    return <p className="text-sm text-ink-2">Waiting for the Works Division to report whether the schedule was carried out.</p>;
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.reportExecution({
+        log_id: record.log_id, outcome, executed_on: executedOn || undefined,
+        notes: notes.trim() || undefined, deviations: deviations.trim() || undefined,
+      });
+      notify(`Execution of plan #${record.log_id} recorded`, { tone: 'success' });
+      announcePlansChanged();
+      onChanged();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const needsDetail = outcome !== 'completed' && !notes.trim() && !deviations.trim();
+  return (
+    <form onSubmit={submit} className="space-y-3 rounded-lg border border-line p-4">
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-ink"><HardHat className="h-4 w-4" aria-hidden />Report execution</h3>
+      {error && <ErrorPanel error={error} />}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="What happened" htmlFor="exec-outcome">
+          <Select id="exec-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+            {Object.entries(EXECUTION_OUTCOME_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </Select>
+        </Field>
+        <Field label="Date carried out" htmlFor="exec-date">
+          <TextInput id="exec-date" type="date" value={executedOn} onChange={(e) => setExecutedOn(e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Differences from the plan" htmlFor="exec-dev"
+        hint={outcome !== 'completed' ? 'Required: what was not done, and why.' : 'Times, kW or rooms that differed, if any.'}>
+        <Textarea id="exec-dev" value={deviations} maxLength={2000} onChange={(e) => setDeviations(e.target.value)} placeholder="e.g. Discharge stopped at 20:00 — inverter fault." />
+      </Field>
+      <Field label="Notes" htmlFor="exec-notes">
+        <Textarea id="exec-notes" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+      <Button type="submit" icon={ClipboardCheck} loading={busy} disabled={needsDetail}>Record execution</Button>
+      <p className="text-xs text-ink-2">Recorded permanently in the audit trail. CampusGrid still does not operate equipment.</p>
+    </form>
   );
 }
 
@@ -421,6 +556,13 @@ function scheduleActions(solver) {
   return merged;
 }
 
+function shiftableActions(solver) {
+  const slots = solver.time_slots || [];
+  const on = (solver.served_tier2_kw || []).map((kw, i) => ({ kw: Math.round(kw), slot: slots[i] })).filter((x) => x.kw > 0);
+  if (!on.length) return [];
+  return ['Shiftable equipment (pumps / EV chargers) — run only at:', ...on.map((x) => `[ ] ${x.slot}  ${x.kw} kW`), ''];
+}
+
 function downloadChecklist(record, decided, decision) {
   const solver = decision.solver_summary || {};
   const target = decision.target || {};
@@ -436,8 +578,13 @@ function downloadChecklist(record, decided, decision) {
     'Battery schedule (Asia/Colombo time):',
     ...scheduleActions(solver).map((a) => `[ ] ${a.from}–${a.to}  ${a.kind} at ${a.kw} kW`),
     '',
+    ...shiftableActions(solver),
+    ...(decision.load_flexibility?.hvac_flex_ratio
+      ? [`Air-conditioning: pre-cool before the peak and ease off during it, within ±${Math.round(decision.load_flexibility.hvac_flex_ratio * 100)}% of normal cooling per half-hour, keeping rooms inside the comfort band.`, '']
+      : []),
     ...(decision.warnings?.length ? ['Warnings acknowledged at approval:', ...decision.warnings.map((w) => `- ${w}`), ''] : []),
     'Carried out by: ____________________   Date/time: ____________________',
+    'Then record the outcome on this plan in CampusGrid (Report execution).',
   ].filter((l) => l !== null);
 
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });

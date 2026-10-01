@@ -119,6 +119,14 @@ ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS previous_signature VARCHAR(
 CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_decision_per_recommendation
     ON audit_log_store (parent_log_id) WHERE record_type = 'approval_decision';
 
+-- At most one Works Division execution report per approved plan.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_execution_per_recommendation
+    ON audit_log_store (parent_log_id) WHERE record_type = 'execution_report';
+
+-- At most one review of each quarantined regulation submission.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_review_per_submission
+    ON audit_log_store (parent_log_id) WHERE record_type = 'knowledge_review';
+
 -- Append-only enforcement at the database level, not just in application code.
 CREATE OR REPLACE FUNCTION audit_log_store_block_mutation() RETURNS trigger AS $$
 BEGIN

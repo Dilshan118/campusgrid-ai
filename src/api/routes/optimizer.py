@@ -37,6 +37,14 @@ def solve_dispatch(
             "max_discharge_rate_kw": request.max_discharge_rate_kw,
             "initial_soc_ratio": request.initial_soc_ratio,
         },
+        "load_parameters": {
+            "hvac_flex_ratio": None if request.hvac_flex_percent is None else request.hvac_flex_percent / 100.0,
+            "shiftable_load_kw": request.shiftable_load_kw,
+            "shiftable_hours": request.shiftable_hours,
+            "shiftable_usual_start": request.shiftable_usual_start,
+            "month_to_date_peak_kva": request.month_to_date_peak_kva,
+            "power_factor": request.power_factor,
+        },
     })
     response = agent_response(res)
     # Flat fields kept for existing clients of this endpoint.
