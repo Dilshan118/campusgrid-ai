@@ -90,7 +90,11 @@ export const RECORD_TYPE_LABELS = {
   policy_lookup: 'Regulation lookup',
   forecast_review: 'Forecast',
   out_of_scope_query: 'Out of scope',
-  knowledge_ingestion: 'Document upload',
+  knowledge_ingestion: 'Document indexed',
+  knowledge_submission: 'Regulation submitted',
+  knowledge_review: 'Regulation review',
+  timetable_update: 'Timetable change',
+  execution_report: 'Execution report',
 };
 
 export const INTENT_LABELS = {
@@ -107,4 +111,6 @@ export const ROLE_LABELS = {
   FACILITY_MANAGER: 'Facility Manager',
   OPERATOR: 'Operator',
   ENERGY_AUDITOR: 'Energy Auditor',
+  TIMETABLE_COORDINATOR: 'Timetable Coordinator',
+  WORKS_ENGINEER: 'Works Engineer',
 };

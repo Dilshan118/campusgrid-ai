@@ -80,6 +80,11 @@ export const api = {
     request('POST', '/api/rag/search', { body: { query, top_k: topK, session_id: sessionId } }),
   regulationLibrary: () => request('GET', '/api/rag/documents'),
   ingestRegulation: (payload) => request('POST', '/api/rag/ingest', { body: payload, raw: true }),
+  // Timetable
+  timetable: (day) => request('GET', '/api/timetable', { query: { day } }),
+  uploadTimetable: (payload) => request('POST', '/api/timetable/upload', { body: payload }),
+  addTimetableSession: (payload) => request('POST', '/api/timetable/sessions', { body: payload }),
+  deleteTimetableSession: (id) => request('DELETE', `/api/timetable/sessions/${encodeURIComponent(id)}`),
 
   // Audit & approvals
   auditLogs: (params) => request('GET', '/api/audit/logs', { query: params }),
