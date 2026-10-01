@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, BookOpen, CheckCircle2, ChevronDown, Circle, History, Loader2, RotateCcw, Send, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronDown, History, Loader2, RotateCcw, Send, SlidersHorizontal } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useDraft, announcePlansChanged } from '../lib/hooks';
@@ -41,7 +41,6 @@ export default function AskPage({ query }) {
   const [showOverrides, setShowOverrides] = useState(false);
   const [overrides, setOverrides] = useState({ temp: 0, occ: 1, touchedTemp: false, touchedOcc: false });
   const [running, setRunning] = useState(false);
-  const [activeStep, setActiveStep] = useState(0);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState(() => sessionStore.get(HISTORY_KEY, []));
@@ -64,14 +63,6 @@ export default function AskPage({ query }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-
-  // Progress animation while the request runs (the server does not stream steps).
-  useEffect(() => {
-    if (!running) return undefined;
-    setActiveStep(0);
-    const t = setInterval(() => setActiveStep((s) => Math.min(s + 1, STEPS.length - 1)), 1100);
-    return () => clearInterval(t);
-  }, [running]);
 
   async function ask(text = question) {
     const q = text.trim();
@@ -143,7 +134,7 @@ export default function AskPage({ query }) {
             </form>
           </Card>
 
-          {running && <ProgressSteps active={activeStep} />}
+          {running && <WorkingIndicator />}
           {error && !running && <ErrorPanel error={error} onRetry={() => ask()} />}
           {result && !running && <ResultView result={result} abVariant={abVariant} onAsk={pick} />}
         </div>
@@ -154,21 +145,17 @@ export default function AskPage({ query }) {
   );
 }
 
-function ProgressSteps({ active }) {
+// The server does not stream per-agent progress, so this shows only that work is under way. Which
+// steps actually ran is reported with the answer (StepsRan), from the server's own result.
+function WorkingIndicator() {
   const elapsed = useElapsed(true);
   return (
     <Card title="Working on it" actions={<span className="text-sm text-ink-2 tabular" aria-live="off">{elapsed} s</span>}>
-      <ol className="flex flex-wrap gap-x-6 gap-y-3" aria-live="polite">
-        {STEPS.map((step, i) => (
-          <li key={step.key} className="flex items-center gap-2 text-sm">
-            {i < active ? <CheckCircle2 className="h-4 w-4 text-good-text" aria-hidden />
-              : i === active ? <Loader2 className="h-4 w-4 animate-spin text-accent-text" aria-hidden />
-                : <Circle className="h-4 w-4 text-ink-3" aria-hidden />}
-            <span className={i <= active ? 'text-ink' : 'text-ink-3'}>{step.label}</span>
-          </li>
-        ))}
-      </ol>
-      <p className="mt-3 text-xs text-ink-2">Only the steps your question needs will run. A full plan can take several seconds.</p>
+      <p className="flex items-center gap-2 text-sm text-ink" aria-live="polite">
+        <Loader2 className="h-4 w-4 animate-spin text-accent-text" aria-hidden />
+        Running the steps your question needs…
+      </p>
+      <p className="mt-3 text-xs text-ink-2">A full plan runs the forecast, comfort check, regulations and optimizer, then a digital-twin check of the result; it can take several seconds.</p>
     </Card>
   );
 }
