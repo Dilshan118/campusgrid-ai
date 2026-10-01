@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-05",
+  "test_objective": "Test whether MemoryVectorStore.similarity_search() validates query-vector size before doing O(corpus_size x vector_length) work per call.",
+  "attack_scenario": "A 200,000-float query vector (520x the real 384-dim embedding size) is submitted directly to similarity_search().",
+  "expected_behaviour": "The vector store should reject a query vector whose dimensionality does not match the configured EMBEDDING_DIMENSION before doing any per-document work.",
+  "actual_behaviour": "Request accepted with no validation or error; 2 results returned in 0.00ms against a 5-document corpus. No length check exists anywhere in MemoryVectorStore._cosine_similarity() or similarity_search().",
+  "evidence_log": "len(query_vector)=200000, results=2, elapsed_ms=0.00",
+  "severity_and_mitigation": "Severity: Medium in this in-memory/5-document deployment, High at production corpus scale — cost scales linearly with both corpus size and query-vector length, so a real campus-scale document corpus plus an oversized vector is a genuine CPU-exhaustion amplification vector. Mitigation: reject any query_vector whose length != EmbeddingSettings.dimension at the top of similarity_search().",
+  "evidence_generated_utc": "2026-10-01T09:51:48.286019+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

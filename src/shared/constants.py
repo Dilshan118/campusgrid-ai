@@ -3,10 +3,11 @@ CampusGrid AI: Shared Domain Constants
 PUCSL electricity tariff schedules, ASHRAE thermal comfort bounds, and physical guardrails.
 """
 
-# PUCSL Time-of-Use (TOU) Electricity Tariffs (Sri Lanka GP-2 / Industrial I-2)
-TARIFF_OFF_PEAK_LKR = 15.00   # 22:30 - 05:30 (Low demand rate)
-TARIFF_DAY_LKR = 30.00        # 05:30 - 18:00 (Standard daytime rate)
-TARIFF_PEAK_LKR = 58.00       # 18:00 - 22:30 (High demand peak surcharge rate)
+# PUCSL General Purpose GP-2 current schedule, snapshot verified 2026-10-01.
+# Source and the exact snapshot hash are pinned in backend/rag/corpus/tariffs/trusted_sources.json.
+TARIFF_OFF_PEAK_LKR = 15.40   # 22:30 - 05:30
+TARIFF_DAY_LKR = 21.80        # 05:30 - 18:30
+TARIFF_PEAK_LKR = 26.60       # 18:30 - 22:30
 
 # Maximum Demand Penalty (kVA)
 MAX_DEMAND_SURCHARGE_LKR_KVA = 1100.00  # Penalty applied to peak 15-minute spike

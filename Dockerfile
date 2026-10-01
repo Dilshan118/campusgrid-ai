@@ -25,6 +25,14 @@ COPY .env.example ./
 RUN pip install --no-cache-dir -U pip setuptools wheel \
     && pip install --no-cache-dir -e ".[postgres]"
 
+# Fail closed: the image refuses to start with the public example JWT secret, so a deployment
+# must supply JWT_SECRET_KEY (and AUDIT_SIGNING_KEY) at run time. Override APP_ENV only for local tests.
+ENV APP_ENV=production
+
+# Run as an unprivileged user; the app never needs to write to its own code.
+RUN useradd --system --no-create-home --uid 10001 campusgrid
+USER campusgrid
+
 EXPOSE 8000
 
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

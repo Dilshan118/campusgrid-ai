@@ -4,6 +4,7 @@ import { AppLayout } from './components/Layout';
 import { EmptyState, LoadingBlock, NotAllowed } from './components/ui';
 import { matchPath, navigate, buildPath, useRoute } from './lib/router';
 import LoginPage from './pages/LoginPage';
+import PublicLandingPage from './pages/PublicLandingPage';
 import { PageErrorBoundary, ToastProvider } from './components/feedback';
 
 // Pages load on demand, so signing in does not download every screen (or the chart library) up front.
@@ -19,10 +20,11 @@ const LibraryPage = lazy(() => import('./pages/LibraryPage'));
 const AuditPage = lazy(() => import('./pages/AuditPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 const SystemStatusPage = lazy(() => import('./pages/SystemStatusPage'));
+const PUBLIC_ROUTES = new Set(['/', '/product', '/solutions', '/how-it-works', '/commercial-plans', '/responsible-ai', '/contact']);
 
 // Order matters: '/plans/new' must be matched before '/plans/:id'.
 const ROUTES = [
-  { pattern: '/', page: OverviewPage, title: 'Overview' },
+  { pattern: '/app', page: OverviewPage, title: 'Overview' },
   { pattern: '/ask', page: AskPage, permission: 'orchestrator:query', title: 'Ask CampusGrid' },
   { pattern: '/plans', page: ApprovalsPage, permission: 'audit:read', title: 'Approvals' },
   { pattern: '/plans/new', page: NewPlanPage, permission: 'optimizer:run', title: 'New dispatch plan' },
@@ -52,11 +54,16 @@ function Screen() {
   }
 
   useEffect(() => {
-    document.title = route.path === '/login' ? 'Sign in · CampusGrid AI' : `${matched?.title || 'Not found'} · CampusGrid AI`;
+    const publicTitle = ({ '/': 'Energy management for campuses', '/product': 'Product', '/solutions': 'Solutions', '/how-it-works': 'How it works', '/commercial-plans': 'Commercial plans', '/responsible-ai': 'Responsible AI', '/contact': 'Request a pilot' })[route.path];
+    document.title = publicTitle ? `${publicTitle} · CampusGrid AI` : route.path === '/login' ? 'Sign in · CampusGrid AI' : `${matched?.title || 'Not found'} · CampusGrid AI`;
     window.scrollTo(0, 0);
     document.getElementById('main')?.focus({ preventScroll: true });
+    if (PUBLIC_ROUTES.has(route.path) && route.path !== '/') {
+      document.getElementById(route.path.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }, [route.path, matched?.title]);
 
+  if (PUBLIC_ROUTES.has(route.path)) return <PublicLandingPage route={route.path} />;
   if (status === 'checking') return <div className="flex h-full items-center justify-center"><LoadingBlock label="Checking your session…" /></div>;
 
   if (route.path === '/login') {

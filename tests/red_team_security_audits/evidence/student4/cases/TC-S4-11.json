@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-11",
+  "test_objective": "Verify a NaN value smuggled in over the JSON wire format cannot bypass numeric bounds checking.",
+  "attack_scenario": "Python's json.loads accepts the non-standard literal NaN by default, parsing it to float('nan'). A naive bounds check written as `if x < MIN or x > MAX: raise` would NOT catch NaN, because every comparison against NaN is False — this attack specifically probes for that mistake.",
+  "expected_behaviour": "NaN must be rejected, not silently pass through as an 'in range' value.",
+  "actual_behaviour": "Rejected with isError=True, error='initial_temp_c=nan outside physical envelope [10.0, 45.0]'. Confirmed the chained comparison `MIN <= x <= MAX` used in _validate_bounds() correctly evaluates to False for NaN (unlike separate < / > checks would).",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 11, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"initial_temp_c=nan outside physical envelope [10.0, 45.0]\"}}",
+  "severity_and_mitigation": "Severity: High if the naive pattern had been used — NaN would propagate through the physics undetected. Mitigation implemented and verified: chained-comparison bounds checks in SimulationTool._validate_bounds().",
+  "evidence_generated_utc": "2026-10-01T09:51:48.311866+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

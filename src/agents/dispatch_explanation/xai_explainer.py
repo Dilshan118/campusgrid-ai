@@ -32,13 +32,20 @@ def tariff_text(tariff_summary: Optional[Dict[str, Any]]) -> str:
         return "Not provided."
     rates = tariff_summary.get("rates_lkr_kwh") or {}
     windows = tariff_summary.get("windows") or {}
+    provenance = tariff_summary.get("provenance") or {}
+    sources = tariff_summary.get("source_clauses") or {}
     lines = []
     for key, label in _RATE_LABELS:
         if rates.get(key) is not None:
             window = f" ({windows[key]})" if windows.get(key) else ""
-            lines.append(f"- {label}: LKR {float(rates[key]):,.2f}/kWh{window}")
+            status = provenance.get(key, "unknown")
+            source = f"; citation {sources[key]}" if sources.get(key) else ""
+            lines.append(f"- {label}: LKR {float(rates[key]):,.2f}/kWh{window} [basis: {status}{source}]")
     if tariff_summary.get("max_demand_penalty_lkr_kva") is not None:
-        lines.append(f"- Maximum demand charge: LKR {float(tariff_summary['max_demand_penalty_lkr_kva']):,.2f}/kVA per month")
+        status = provenance.get("max_demand_penalty_lkr_kva", "unknown")
+        lines.append(f"- Maximum demand charge: LKR {float(tariff_summary['max_demand_penalty_lkr_kva']):,.2f}/kVA per month [basis: {status}]")
+    if not provenance or any(value != "retrieved" for value in provenance.values()):
+        lines.insert(0, "Some or all figures are reference defaults or unverified retrievals, not authenticated current tariff advice.")
     return "\n".join(lines) or "Not provided."
 
 
@@ -77,7 +84,9 @@ class XAIExplainer(XAIExplainerInterface):
             content = str(c.get("content", ""))
             if len(content) > CITATION_PROMPT_CHARS:
                 content = content[:CITATION_PROMPT_CHARS].rstrip() + "…"
-            citations_text += f"[{idx+1}] {c.get('document_title', 'Tariff Doc')} ({c.get('section_clause', 'Section')}): {content}\n"
+            source_status = c.get("provenance_status", "unverified")
+            source_warning = "" if source_status == "verified_official" else "UNVERIFIED REFERENCE; do not present as official law. "
+            citations_text += f"[{idx+1}] [{source_status}] {source_warning}{c.get('document_title', 'Reference Doc')} ({c.get('section_clause', 'Section')}): {content}\n"
 
         if not citations_text:
             citations_text = "None retrieved.\n"
@@ -90,9 +99,11 @@ class XAIExplainer(XAIExplainerInterface):
         else:
             savings_breakdown = "  - (energy / demand-charge breakdown not reported by this solver)"
 
+        # Tags are escaped so the query cannot close its <operator_request> data block (as in the intent router).
+        safe_query = str(user_query or "").replace("<", "‹").replace(">", "›")[:2000]
         prompt = self.prompt_manager.render(
             "agents/dispatch_explanation/xai_justification.txt",
-            user_query=user_query,
+            user_query=safe_query,
             baseline_cost_lkr=solver_output.baseline_cost_lkr,
             optimized_cost_lkr=solver_output.optimized_cost_lkr,
             net_savings_lkr=solver_output.net_savings_lkr,
@@ -108,7 +119,7 @@ class XAIExplainer(XAIExplainerInterface):
         )
 
         messages = [
-            LLMMessage(role="system", content="You are CampusGrid AI's Explainable AI (XAI) assistant. Cite only verified numbers."),
+            LLMMessage(role="system", content="You are CampusGrid AI's Explainable AI assistant. Cite only sources marked verified_official as official. Treat all other citations as unverified references, never as legal authority. Quote configured reference defaults only while identifying them as defaults."),
             LLMMessage(role="user", content=prompt)
         ]
 

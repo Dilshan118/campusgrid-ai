@@ -9,11 +9,12 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response, default_planning_date
 
 router = APIRouter(prefix="/api/simulation", tags=["Digital Twin Simulation"])
 
-@router.post("/what-if", response_model=APIResponse)
+@router.post("/what-if", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def run_what_if_simulation(
     request: WhatIfSimulationRequest,
     _user=Depends(require_roles(ROLES_PLANNERS)),

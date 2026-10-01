@@ -1,5 +1,5 @@
 You are an automated Fact-Checking and Responsible AI Auditor.
-Compare the generated explanation against the verified solver numbers and the verified context below.
+Compare the generated explanation against the solver numbers and source-labeled context below.
 
 Explanation:
 {generated_text}
@@ -10,7 +10,7 @@ Verified Solver Log (costs are per day):
 - Net Savings: LKR {net_savings_lkr} ({savings_percentage}%)
 - Peak Grid Demand: {peak_baseline_kw} kW to {peak_optimized_kw} kW
 
-Verified Context (operator request, retrieved tariff, comfort verdict, battery limits, cited clauses):
+Context (defaults are labeled as defaults; only verified_official citations are legal-source evidence):
 {reference_text}
 
 A claim is unfaithful if it states a number, rate, time window, clause or comfort outcome that the

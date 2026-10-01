@@ -27,13 +27,13 @@ def index_to_time_slot(idx: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 def is_peak_hour(slot: str) -> bool:
-    """Returns True if time slot falls within the PUCSL Peak Tariff window (18:00 - 22:30)."""
+    """Returns True if time slot falls within the GP-2 peak window (18:30 - 22:30)."""
     idx = time_slot_to_index(slot)
-    # 18:00 is idx 36, 22:00 is idx 44, 22:30 is idx 45
-    return 36 <= idx <= 44
+    # 18:30 is idx 37, 22:00 is idx 44, 22:30 is idx 45 (exclusive)
+    return 37 <= idx <= 44
 
 def _window_bounds(window: str) -> Tuple[int, int]:
-    """'18:00 - 22:30' -> (36, 45): half-open range of slot indices the window covers."""
+    """'18:30 - 22:30' -> (37, 45): half-open range of slot indices the window covers."""
     start, end = [part.strip() for part in window.split("-")]
     return time_slot_to_index(start), time_slot_to_index(end)
 
@@ -50,8 +50,8 @@ def get_tou_tariff_for_slot(
     peak_rate: float,
     day_rate: float,
     off_peak_rate: float,
-    peak_window: str = "18:00 - 22:30",
-    day_window: str = "05:30 - 18:00",
+    peak_window: str = "18:30 - 22:30",
+    day_window: str = "05:30 - 18:30",
 ) -> float:
     """Returns appropriate TOU rate in LKR/kWh for the given 30-min time slot.
 
@@ -78,8 +78,8 @@ def build_tou_tariff_profile(
     documents; the PUCSL GP-2 reference windows are used for any window not supplied.
     """
     windows = windows or {}
-    peak_window = windows.get("peak", "18:00 - 22:30")
-    day_window = windows.get("day", "05:30 - 18:00")
+    peak_window = windows.get("peak", "18:30 - 22:30")
+    day_window = windows.get("day", "05:30 - 18:30")
     return [
         get_tou_tariff_for_slot(slot, peak_rate, day_rate, off_peak_rate, peak_window, day_window)
         for slot in time_slots

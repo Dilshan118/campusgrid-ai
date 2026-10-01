@@ -1,0 +1,16 @@
+{
+  "benchmark": "tests/benchmark_dispatch.py",
+  "dataset": "fixed synthetic 48-interval demand/solar/tariff profile",
+  "assumptions": {"battery_capacity_kwh": 500, "charge_discharge_limit_kw": 100, "round_trip_efficiency": 0.92},
+  "common_objective": "sum(grid_kw * tariff_lkr_kwh * 0.5) + max(grid_kw) * (1100 / 30)",
+  "solvers": {
+    "current": {"status": "Optimal", "reported_optimized_cost_lkr": 228590.14, "common_objective_cost_lkr": 228590.14, "peak_grid_kw": 550.0, "soc_min_kwh": 106.13, "soc_max_kwh": 450.0, "max_charge_kw": 100.0, "max_discharge_kw": 100.0, "solve_time_ms_observed": 213.688},
+    "reference": {"status": "Optimal", "reported_optimized_cost_lkr": 205957.20, "common_objective_cost_lkr": 226123.86, "peak_grid_kw": 550.0, "soc_min_kwh": 100.0, "soc_max_kwh": 450.0, "max_charge_kw": 100.0, "max_discharge_kw": 100.0, "solve_time_ms_observed": 59.410}
+  },
+  "limitations": [
+    "One synthetic scenario is not a performance distribution or field test.",
+    "The shared recomputed objective shows the reference plan is LKR 2466.28 lower on this scenario; this is a regression to investigate, not a claim that the current solver outperforms the baseline.",
+    "Observed solve time is a single local Windows run and is not a latency guarantee.",
+    "Both plans retain the same 550 kW peak in this scenario; neither has a relative peak-shaving advantage."
+  ]
+}

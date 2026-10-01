@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-10",
+  "test_objective": "Verify mismatched-length input arrays are rejected rather than silently truncated by zip().",
+  "attack_scenario": "MCP tools/call with ambient_temps of length 3 but occupant_counts/hvac_power_kw of length 1 — a client bug or an attempt to desynchronize which ambient reading pairs with which occupancy count.",
+  "expected_behaviour": "Reject the call when input array lengths disagree.",
+  "actual_behaviour": "Rejected with isError=True, error='ambient_temps, occupant_counts and hvac_power_kw must be equal length (got 3, 1, 1)'",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"ambient_temps, occupant_counts and hvac_power_kw must be equal length (got 3, 1, 1)\"}}",
+  "severity_and_mitigation": "Severity: Medium (silent truncation via zip() would quietly run a shorter, wrong simulation instead of failing loudly). Mitigation implemented: equal-length check in SimulationTool._validate_bounds() before zip() is ever called in BuildingThermalTwin.simulate().",
+  "evidence_generated_utc": "2026-10-01T09:51:48.309372+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

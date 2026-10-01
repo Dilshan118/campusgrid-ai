@@ -19,6 +19,12 @@ from src.domain.interfaces.tool import Tool, ToolResult
 OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
 REQUEST_TIMEOUT_SECONDS = 5.0
 CACHE_TTL_SECONDS = 3600  # weather forecasts don't need refetching more than hourly
+# SEC-07: the date comes from API and MCP callers. Only dates the forecast endpoint can answer
+# (up to 92 days back, 16 ahead) trigger an outbound request; any other date gets the offline
+# curve directly, and the cache is bounded, so callers cannot drive unbounded external calls or memory.
+MAX_PAST_DAYS = 92
+MAX_FORECAST_DAYS = 16
+MAX_CACHE_ENTRIES = 128
 
 # Standard diurnal curve for a tropical campus (Malabe, Sri Lanka: ~25C night to ~33C noon).
 # Used whenever Open-Meteo is unreachable, so tests and offline demos never depend on the internet.
@@ -76,7 +82,10 @@ class WeatherTool(Tool):
             elapsed = (time.time() - start_time) * 1000.0
             return ToolResult(success=True, data={**cached, "source": "cache"}, execution_time_ms=elapsed)
 
-        temperatures, source = self._fetch_temperatures(date_str)
+        if date_str and not self._within_forecast_range(date_str):
+            temperatures, source = self._offline_fallback_curve(date_str), "offline-fallback"
+        else:
+            temperatures, source = self._fetch_temperatures(date_str)
         elapsed = (time.time() - start_time) * 1000.0
 
         data = {
@@ -89,6 +98,11 @@ class WeatherTool(Tool):
         self._set_cached(cache_key, data)
 
         return ToolResult(success=True, data=data, execution_time_ms=elapsed)
+
+    @staticmethod
+    def _within_forecast_range(date_str: str) -> bool:
+        offset = (date.fromisoformat(date_str) - date.today()).days
+        return -MAX_PAST_DAYS <= offset <= MAX_FORECAST_DAYS
 
     def _fetch_temperatures(self, date_str: Optional[str]) -> (List[float], str):
         """Calls Open-Meteo for a 48-half-hour temperature series; falls back offline on any failure."""
@@ -153,4 +167,6 @@ class WeatherTool(Tool):
         return entry["data"]
 
     def _set_cached(self, key: str, data: Dict[str, Any]) -> None:
+        if key not in self._cache and len(self._cache) >= MAX_CACHE_ENTRIES:
+            del self._cache[min(self._cache, key=lambda k: self._cache[k]["cached_at"])]  # evict the oldest
         self._cache[key] = {"data": data, "cached_at": time.time()}

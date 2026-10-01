@@ -238,10 +238,10 @@ from src.shared.datetime_utils import build_tou_tariff_profile, get_standard_48_
 
 SLOTS = get_standard_48_time_slots()
 EVENING_PEAK_LOAD = [200.0 if i < 16 else (650.0 if 36 <= i < 45 else 420.0) for i in range(48)]
-TARIFFS = build_tou_tariff_profile(SLOTS, 58.0, 30.0, 15.0)
+TARIFFS = build_tou_tariff_profile(SLOTS, 26.6, 21.8, 15.4)
 TARIFF_SUMMARY = {
-    "rates_lkr_kwh": {"peak": 61.5, "day": 30.0, "off_peak": 15.0},
-    "windows": {"peak": "18:00 - 22:30", "day": "05:30 - 18:00", "off_peak": "22:30 - 05:30"},
+    "rates_lkr_kwh": {"peak": 26.6, "day": 21.8, "off_peak": 15.4},
+    "windows": {"peak": "18:30 - 22:30", "day": "05:30 - 18:30", "off_peak": "22:30 - 05:30"},
     "max_demand_penalty_lkr_kva": 1100.0,
 }
 
@@ -328,7 +328,7 @@ def test_explanation_prompt_carries_retrieved_tariff_and_comfort_verdict():
         time_slots=SLOTS, base_load_kw=EVENING_PEAK_LOAD, solar_gen_kw=[0.0] * 48, grid_tariff_lkr_kwh=TARIFFS))
     text = XAIExplainer(llm).generate_explanation(solver, [], "cut the peak", TARIFF_SUMMARY, comfort_feasible=False)
     prompt = llm.call_history[-1][-1].content
-    assert "LKR 61.50/kWh (18:00 - 22:30)" in prompt and "58.00" not in prompt
+    assert "LKR 26.60/kWh (18:30 - 22:30)" in prompt and "58.00" not in prompt
     assert "Comfort NOT confirmed" in prompt
     assert "did not confirm the comfort band" in text
 

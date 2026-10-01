@@ -143,6 +143,9 @@ export function ClauseCard({ citation, rank, onOpen, highlight }) {
         {rank && <span className="rounded bg-surface-2 px-1.5 py-0.5 font-medium text-ink tabular">#{rank}</span>}
         <span className="font-medium text-ink">{citation.document_title}</span>
         {citation.effective_date && <span>· effective {formatDate(citation.effective_date)}</span>}
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${citation.provenance_status === 'verified_official' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-900'}`}>
+          {citation.provenance_status === 'verified_official' ? 'Verified official source' : 'Unverified reference'}
+        </span>
         {(citation.matched_by || []).map((m) => (
           <Badge key={m} tone="info">{m === 'semantic' ? 'Matched by meaning' : 'Matched by keywords'}</Badge>
         ))}

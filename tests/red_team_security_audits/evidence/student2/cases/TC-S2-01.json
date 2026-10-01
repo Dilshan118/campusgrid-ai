@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-01",
+  "test_objective": "Determine whether raw sub-meter readings are exposed at full precision, enabling NILM-style appliance disaggregation.",
+  "attack_scenario": "GET /api/telemetry/historical?date=2026-09-06 called twice by an authenticated client.",
+  "expected_behaviour": "Exported readings should carry calibrated DP noise (see get_privacy_protected_export) that differs from the exact wattage and is fixed per date, so averaging repeated queries cannot recover it.",
+  "actual_behaviour": "Endpoint returned 48 intervals; readings differ from exact meter values: True; same noisy values on a repeated call (averaging-resistant): True; privacy mechanism header present: True.",
+  "evidence_log": "[TC-S2-01] first_row={'time_slot': '00:00', 'base_load_kw': 274.2, 'solar_gen_kw': 0.0, 'outdoor_temp_c': 26.2, 'grid_tariff_lkr_kwh': 15.0, 'zone_occupancy_count': 20}, header=laplace;epsilon=1.0",
+  "severity_and_mitigation": "Severity: High (CVSS 7.2) originally — exact repeatable sub-meter data enables appliance/occupant fingerprinting. Mitigation verified: /api/telemetry/historical routed through TelemetryForecastingAgent.get_privacy_protected_export() with Laplace mechanism (epsilon=1.0) in src/api/routes/telemetry.py per Team Lead WIRE request.",
+  "evidence_generated_utc": "2026-10-01T09:37:50.910445+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

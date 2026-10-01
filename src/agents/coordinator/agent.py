@@ -42,6 +42,7 @@ from src.domain.entities.audit import (
 )
 from src.domain.exceptions.base import DomainException
 from src.shared.constants import COMFORT_TEMP_MIN_C, COMFORT_TEMP_MAX_C
+from src.shared.constants import TARIFF_PEAK_LKR, TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR, MAX_DEMAND_SURCHARGE_LKR_KVA
 from src.shared.datetime_utils import build_tou_tariff_profile
 
 # Shared by every orchestrator instance: Agent 3 runs here while Agents 1 and 2 run on the request thread.
@@ -204,8 +205,15 @@ class CampusGridOrchestrator(BaseAgent):
             raise AgentPipelineError("Agent 3 (Policy & Information Retrieval)", a3_res.error)
 
         citations = a3_res.data.get("citations", [])
+        verified_count = sum(c.get("provenance_status") == "verified_official" for c in citations)
+        unverified_count = len(citations) - verified_count
         decision = {
-            "summary": f"Retrieved {len(citations)} verified regulatory clauses.",
+            "summary": (
+                f"Retrieved {verified_count} provenance-verified official clauses and "
+                f"{unverified_count} unverified reference clauses."
+            ),
+            "verified_official_clause_count": verified_count,
+            "unverified_clause_count": unverified_count,
             "extracted_rules": a3_res.data.get("extracted_rules", {})
         }
         log_id = self._audit(ctx, RECORD_POLICY_LOOKUP, {"agent3_policy_rag": a3_res.model_dump()}, decision)
@@ -213,7 +221,7 @@ class CampusGridOrchestrator(BaseAgent):
             ctx, log_id,
             status="policy_info_retrieved",
             recommendation=decision,
-            explanation=f"Regulatory lookup completed. Retrieved {len(citations)} legal clauses.",
+            explanation=decision["summary"],
             citations=citations,
             extracted_rules=a3_res.data.get("extracted_rules", {}),
         )
@@ -292,21 +300,23 @@ class CampusGridOrchestrator(BaseAgent):
         time_slots = a1_res.data.get("time_slots", [])
         tariffs_from_rag = build_tou_tariff_profile(
             time_slots,
-            rates.get("peak", a3_res.data.get("peak_tariff_lkr", 58.0)),
-            rates.get("day", a3_res.data.get("day_tariff_lkr", 30.0)),
-            rates.get("off_peak", a3_res.data.get("off_peak_tariff_lkr", 15.0)),
+            rates.get("peak", a3_res.data.get("peak_tariff_lkr", TARIFF_PEAK_LKR)),
+            rates.get("day", a3_res.data.get("day_tariff_lkr", TARIFF_DAY_LKR)),
+            rates.get("off_peak", a3_res.data.get("off_peak_tariff_lkr", TARIFF_OFF_PEAK_LKR)),
             windows=rules.get("windows"),
         )
         citations = a3_res.data.get("all_citations", a3_res.data.get("citations", []))
         thermal_feasible, comfort_violations = self._thermal_verdict(a2_res.data)
         tariff_summary = {
             "rates_lkr_kwh": {
-                "peak": rates.get("peak", a3_res.data.get("peak_tariff_lkr", 58.0)),
-                "day": rates.get("day", a3_res.data.get("day_tariff_lkr", 30.0)),
-                "off_peak": rates.get("off_peak", a3_res.data.get("off_peak_tariff_lkr", 15.0)),
+                "peak": rates.get("peak", a3_res.data.get("peak_tariff_lkr", TARIFF_PEAK_LKR)),
+                "day": rates.get("day", a3_res.data.get("day_tariff_lkr", TARIFF_DAY_LKR)),
+                "off_peak": rates.get("off_peak", a3_res.data.get("off_peak_tariff_lkr", TARIFF_OFF_PEAK_LKR)),
             },
             "windows": rules.get("windows"),
-            "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
+            "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", MAX_DEMAND_SURCHARGE_LKR_KVA),
+            "provenance": rules.get("provenance", {}),
+            "source_clauses": rules.get("source_clauses", {}),
         }
 
         a4_res = self.agent4.execute({
@@ -316,8 +326,13 @@ class CampusGridOrchestrator(BaseAgent):
             "tariffs_lkr_kwh": tariffs_from_rag,
             "citations": citations,
             "user_query": ctx["query"],
+            # What the deterministic parser read from the query: the only request values the
+            # faithfulness check may treat as verified (the free text itself is untrusted).
+            "request_parameters": {
+                "room": parsed["room"], "date": parsed["date"], "target_temp_c": parsed.get("target_temp_c"),
+            },
             "feasibility_verdict": thermal_feasible,
-            "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", 1100.0),
+            "max_demand_penalty_lkr_kva": rules.get("max_demand_penalty_lkr_kva", MAX_DEMAND_SURCHARGE_LKR_KVA),
             "tariff_summary": tariff_summary,
             **ctx["battery_parameters"],
         })
@@ -332,6 +347,7 @@ class CampusGridOrchestrator(BaseAgent):
             "source_clauses": rules.get("source_clauses", {}),
         }
         warnings = self._dispatch_warnings(parsed, rules, thermal_feasible, comfort_violations, a4_res.data)
+        warnings += self._battery_limit_warnings(a4_res.data.get("battery_parameters"))
 
         final_decision = {
             "solver_summary": a4_res.data.get("solver_output", {}),
@@ -412,6 +428,29 @@ class CampusGridOrchestrator(BaseAgent):
                 parsed.setdefault("notes", []).append(f"Room '{room}' is not in the campus inventory; using {parsed['room']}.")
         if input_data.get("date"):
             parsed["date"], parsed["date_explicit"] = input_data["date"], True
+
+    def _battery_limit_warnings(self, params: Optional[Dict[str, float]]) -> List[str]:
+        """SEC-03: the dispatch form's battery values are caller input. A plan solved with a larger
+        battery or inverter than the installed one would schedule power the site cannot deliver,
+        so it carries a warning that the approver must explicitly acknowledge."""
+        installed_kwh = self.battery_limits.get("capacity_kwh")
+        installed_kw = self.battery_limits.get("max_power_kw")
+        if not params:
+            return []
+        warnings: List[str] = []
+        if installed_kwh is not None and float(params.get("battery_capacity_kwh", 0.0)) > installed_kwh + 1e-6:
+            warnings.append(
+                f"Plan assumes a {float(params['battery_capacity_kwh']):g} kWh battery, larger than the installed "
+                f"{installed_kwh:g} kWh; the schedule may not be achievable on site."
+            )
+        if installed_kw is not None:
+            for key, label in (("max_charge_rate_kw", "charge"), ("max_discharge_rate_kw", "discharge")):
+                if float(params.get(key, 0.0)) > installed_kw + 1e-6:
+                    warnings.append(
+                        f"Plan assumes a {label} rate of {float(params[key]):g} kW, above the installed "
+                        f"{installed_kw:g} kW rating; the schedule may not be achievable on site."
+                    )
+        return warnings
 
     def _battery_limits_used(self, params: Optional[Dict[str, float]]) -> Dict[str, float]:
         """The battery limits the plan was actually solved with (settings, or the dispatch form's values)."""

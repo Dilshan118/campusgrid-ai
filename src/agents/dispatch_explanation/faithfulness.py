@@ -74,6 +74,8 @@ def _solver_figures(solver: OptimizationResult) -> List[float]:
 def _trusted_text(citations: List[Dict[str, Any]], grounding_text: Optional[str]) -> str:
     parts = [grounding_text or ""]
     for c in citations:
+        if c.get("provenance_status") != "verified_official":
+            continue
         parts += [str(c.get("document_title", "")), str(c.get("section_clause", "")), str(c.get("content", ""))]
     return "\n".join(parts)
 
@@ -177,6 +179,8 @@ class FaithfulnessVerifier(FaithfulnessVerifierInterface):
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         reference = [grounding_text or "No additional context."]
         for c in citations:
+            if c.get("provenance_status") != "verified_official":
+                continue
             content = str(c.get("content", ""))[:_CITATION_PROMPT_CHARS]
             reference.append(f"- {c.get('document_title', '')} ({c.get('section_clause', '')}): {content}")
         prompt = self.prompt_manager.render(

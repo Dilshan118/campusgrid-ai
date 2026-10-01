@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-14",
+  "test_objective": "Verify whether an on-path attacker (a compromised proxy, a shared network segment) could read commanded HVAC setpoints and occupancy from a captured tool-call message.",
+  "attack_scenario": "Serialize a real tools/call request exactly as it would be transmitted (json.dumps of the JSON-RPC envelope), then inspect the raw bytes as an interceptor would.",
+  "expected_behaviour": "A production message protocol should encrypt payload contents (TLS) and/or sign the message; sensitive setpoints should not be trivially readable from a captured payload.",
+  "actual_behaviour": "The full request is plain, human-readable JSON: {\"jsonrpc\": \"2.0\", \"id\": 14, \"method\": \"tools/call\", \"params\": {\"name\": \"simulate_building_thermal_dynamics\", \"arguments\": {\"initial_temp_c\": 24.0, \"a... — every argument (temperature, occupancy, HVAC power) is readable without decryption. No 'signature', 'hmac', 'nonce', or 'auth' field exists anywhere in the message schema.",
+  "evidence_log": "payload_bytes_readable=True, has_signature_field=False, has_hmac_field=False",
+  "severity_and_mitigation": "Severity: Medium (this project's MCP transport is currently in-process / same-host; risk becomes High the moment this is exposed over a real network). Mitigation: carry MCP traffic over TLS (wss/https transport) and add per-message signing once the real `mcp` SDK transport is wired in (filed as a WIRE request to the Team Lead, since pyproject.toml is lead-owned).",
+  "evidence_generated_utc": "2026-10-01T09:51:48.337739+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

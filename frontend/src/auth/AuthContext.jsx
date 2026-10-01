@@ -8,7 +8,7 @@ import { setAnalyticsUser } from '../lib/analytics';
 const SESSION_KEY = 'cg-session';
 const WARN_BEFORE_MS = 5 * 60_000;
 
-export const HOME_BY_ROLE = { FACILITY_MANAGER: '/', OPERATOR: '/ask', ENERGY_AUDITOR: '/audit' };
+export const HOME_BY_ROLE = { FACILITY_MANAGER: '/app', OPERATOR: '/ask', ENERGY_AUDITOR: '/audit' };
 
 const AuthContext = createContext(null);
 
@@ -104,7 +104,7 @@ export function AuthProvider({ children }) {
   const value = useMemo(() => ({
     status, user, expiresAt, expiringSoon, notice, abVariant, login, logout, can,
     dismissExpiryWarning: () => setExpiringSoon(false),
-    homePath: user ? HOME_BY_ROLE[user.role] || '/' : '/login',
+    homePath: user ? HOME_BY_ROLE[user.role] || '/app' : '/login',
   }), [status, user, expiresAt, expiringSoon, notice, abVariant, login, logout, can]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

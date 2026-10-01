@@ -6,9 +6,12 @@ The audit store is append-only. A recommendation row is never edited when a mana
 approves it; instead a separate `approval_decision` row is appended that points back to
 it through `parent_log_id`. Every row is chained to the previous one with a SHA-256
 signature, so any later edit or deletion is detectable (see compute_audit_signature).
+With a signing key configured the signature is an HMAC, so someone who can write to the
+database but does not hold the key cannot recompute a valid chain after editing it.
 """
 
 import hashlib
+import hmac
 import json
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
@@ -61,9 +64,12 @@ class AuditRecord(BaseModel):
     signature: Optional[str] = None
 
 
-def compute_audit_signature(record: AuditRecord, previous_signature: Optional[str]) -> str:
+def compute_audit_signature(
+    record: AuditRecord, previous_signature: Optional[str], signing_key: Optional[bytes] = None
+) -> str:
     """SHA-256 over the previous row's signature plus this row's canonical content (log_id excluded,
-    because a database assigns it only after the insert)."""
+    because a database assigns it only after the insert). HMAC-SHA256 when `signing_key` is given
+    (SEC-09); both are 64 hex characters, so the schema is unchanged."""
     payload = {
         "timestamp": canonical_timestamp(record.timestamp),
         "user_id": record.user_id,
@@ -77,4 +83,6 @@ def compute_audit_signature(record: AuditRecord, previous_signature: Optional[st
         "previous_signature": previous_signature or "",
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    if signing_key:
+        return hmac.new(signing_key, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

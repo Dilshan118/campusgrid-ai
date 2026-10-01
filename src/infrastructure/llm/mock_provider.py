@@ -98,7 +98,7 @@ class MockLLMProvider(LLMProvider):
             content = (
                 "Based on the mathematical optimization (MILP solver), CampusGrid AI successfully scheduled "
                 "the 500 kWh battery storage to discharge 100 kW during the expensive evening peak period "
-                "(18:00 - 22:30, PUCSL GP-2 peak tariff: LKR 58.00/kWh). "
+                "(18:30 - 22:30, PUCSL GP-2 peak tariff: LKR 26.60/kWh). "
                 "This shaved the 15-minute maximum demand spike from 820.0 kW down to 720.0 kW, "
                 "yielding a net daily cost reduction of LKR 43,500 (approx. 14.8% savings). "
                 "Precooling in Lecture Hall 1 maintained indoor comfort strictly within ASHRAE-55 standards (21.0°C - 25.5°C)."

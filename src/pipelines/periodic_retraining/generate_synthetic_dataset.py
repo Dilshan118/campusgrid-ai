@@ -41,13 +41,13 @@ def _time_slot(interval_idx: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _tariff_for_hour(hour: int) -> float:
-    """PUCSL-style time-of-use bands (matches the seed convention in InMemoryMeterHistoryRepository)."""
-    if 18 <= hour < 23:
-        return 58.0
-    if hour < 6:
-        return 15.0
-    return 30.0
+def _tariff_for_slot(hour: int, minute: int) -> float:
+    """Hash-pinned PUCSL GP-2 bands in the current corpus snapshot."""
+    if (hour == 18 and minute == 30) or 19 <= hour < 22 or (hour == 22 and minute == 0):
+        return 26.60
+    if hour < 5 or (hour == 5 and minute == 0) or (hour == 22 and minute == 30) or hour >= 23:
+        return 15.40
+    return 21.80
 
 
 def _seasonal_temp_drift(day_idx: int) -> float:
@@ -125,7 +125,7 @@ def generate_rows(seed: int = DEFAULT_SEED) -> List[List]:
             solar_gen_kw = round(_solar_for_slot(interval_idx, clear_sky_factor) + rng.gauss(0.0, 3.0), 1)
             solar_gen_kw = max(0.0, solar_gen_kw)
 
-            tariff = _tariff_for_hour(hour)
+            tariff = _tariff_for_slot(hour, 30 if interval_idx % 2 else 0)
 
             rows.append([
                 current_date.isoformat(),

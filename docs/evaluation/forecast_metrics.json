@@ -1,0 +1,25 @@
+{
+  "model_backend": "lightgbm",
+  "n_train": 3456,
+  "n_test": 864,
+  "test_rmse_kw": 8.775,
+  "test_mae_kw": 6.767,
+  "baseline_test_rmse_kw": 118.279,
+  "baseline_test_mae_kw": 63.332,
+  "rmse_improvement_pct": 92.6,
+  "mae_improvement_pct": 89.3,
+  "baseline": "reference baseline: previous day's same-slot reading + cooling and occupancy adjustments",
+  "trained_at_unix": 1790845271.7213397,
+  "data_path": "src\\pipelines\\periodic_retraining\\data\\campus_90day_dataset.csv",
+  "feature_ranges": {
+    "outdoor_temp_c": [
+      23.3,
+      35.8
+    ],
+    "occupancy_count": [
+      0,
+      534
+    ]
+  },
+  "dataset_type": "synthetic campus_90day_dataset.csv; chronological final-20%-of-days holdout"
+}

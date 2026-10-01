@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-01",
+  "test_objective": "Test whether an internal direct index write can insert an unverified impersonator, and whether retrieval preserves its untrusted status.",
+  "attack_scenario": "Simulate a compromised internal writer by embedding a fake CEB_Tariff_2026_Official.pdf clause that claims LKR 0.05/kWh and adding it directly to both indexes, bypassing the public raw-document ingestion method.",
+  "expected_behaviour": "Unverified content may be searchable for transparency, but must be labeled unverified and must not outrank the hash-pinned PUCSL GP-2 clause or drive extracted tariff rules.",
+  "actual_behaviour": "Search returned titles ['PUCSL Electricity Tariff Schedule GP-2', 'PUCSL Electricity Tariff Schedule GP-2']. Poison citation trust status: not returned.",
+  "evidence_log": "[{\"rank\": 1, \"clause_id\": 4, \"document_title\": \"PUCSL Electricity Tariff Schedule GP-2\", \"section_clause\": \"GP-2 Table - Applicability and time-of-use energy rates\", \"section_title\": \"Applicability and time-of-use energy rates\", \"effective_date\": \"2026-05-11\", \"content\": \"GP-2 applies to each individual point of supply delivered and metered at 400/230 V nominal where the contract demand exceeds 42 kVA. Peak is 18:30 to 22:30 at LKR 26.60 per kWh. Day-time consumption between 05:30 and 18:30 is billed at LKR 21.80 per kWh. Off-peak is 22:30 to 05:30 at LKR 15.40 per kWh. The monthly fixed charge is LKR 3,000.\", \"confidence_score\": 0.016393, \"retrieval_method\": \"sparse_bm25\", \"matched_by\": [\"keyword\"], \"provenance_status\": \"verified_official\", \"source_uri\": \"https://www.pucsl.gov.lk/electric",
+  "severity_and_mitigation": "Residual severity: High only if an attacker obtains internal vector-store write access. Public raw ingestion marks content unverified; retrieval trust-ranks verified tariff clauses first. Restrict internal index-write credentials and monitor ingestion provenance.",
+  "evidence_generated_utc": "2026-10-01T09:51:48.244519+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

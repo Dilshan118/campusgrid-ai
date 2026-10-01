@@ -3,7 +3,34 @@
 **From:** Member 4 (Dev 3 — Optimization & Responsible AI), Agent 4: Dispatch & Explanation
 **To:** Team Lead
 **Branch:** `feature/agent4-dispatch-explanation`
-**Status:** Proposal only — nothing below has been implemented or committed.
+**Status (30 September 2026):** Tier enforcement is implemented in Agent 4; two Lead actions remain.
+
+## Status update — 30 September 2026
+
+| Item | Status |
+|---|---|
+| WIRE-1 tier-load carrier | ✅ Accepted by the Lead (`tier0/1/2_load_kw` on `OptimizationInput`) and now used by the solver |
+| WIRE-2 source of tier loads | ✅ Decision D-1 applied: documented **synthetic** split (`SYNTHETIC_TIER_SHARES`, 10 % / 80 % / 10 %), labelled synthetic in every plan that uses it |
+| WIRE-3 Agent 2 sensitivity | ⏳ Still open (Dev 2). Until it exists, Tier 1 does not flex unless a request supplies `tier1_kw_per_degree_c`. **Must be range-checked when wired — see Student 3 finding V-06 (TC-S3-13).** |
+| WIRE-4 grid import cap | ✅ Accepted (`max_grid_import_kw`) and enforced |
+| D-2 Auditorium / Computer Lab | ✅ Tier 1 (plus Dormitory, same tier as Office) |
+| D-3 Tier 2 recovery | ✅ Every shifted kWh is recovered within the same 48 intervals |
+
+What Agent 4 now does (`milp_solver.py`, `tier_guardrails.py`, `agent.py`): Tier 0 has no decision
+variable and an impossible grid limit raises `InfeasibleOptimizationError`; Tier 1 flexes only in
+the peak-tariff window, at most 1.5 °C worth, with the energy paid back the same day; Tier 2 is
+shifted and recovered; zones in a tier share any reduction in proportion to load; the plan reports
+how much of the saving comes from moving load rather than the battery.
+
+**Remaining Lead requests**
+- **WIRE-5 — turn tiers on in the live pipeline.** Tiers are opt-in because the synthetic split,
+  not measured data, would then drive most of every plan's saving (61 % in TC-S3-15). When the team
+  accepts that, pass `tier_shares=SYNTHETIC_TIER_SHARES` to `DispatchExplanationAgent` in
+  `container.py`, or send `enable_tiers: true` from the orchestrator.
+- **WIRE-6 — pass zones.** Send `zones` (`zone_id`, `room_type`, `load_share`) from the room
+  repository so plans include the per-zone fairness allocation.
+
+The sections below are the original proposal, kept for the record.
 
 ## Why this document exists
 

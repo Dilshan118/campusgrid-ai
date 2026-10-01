@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-02",
+  "test_objective": "Verify sub-meter power readings are perturbed by real (not cosmetic) calibrated Laplace DP noise.",
+  "attack_scenario": "Call add_privacy_noise() 500 times on an identical 200 kW reading and inspect the output distribution.",
+  "expected_behaviour": "Outputs vary run to run (real randomness) and the mean noised value stays close to the true value (unbiased mechanism).",
+  "actual_behaviour": "355 distinct values across 500 draws; mean deviation from true value = 1.06 kW.",
+  "evidence_log": "[TC-S2-02] sample_values=[179.3, 183.0, 189.9, 216.8, 189.9]",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.8). Mitigation: epsilon=1.0 Laplace noise confirmed live in src/agents/telemetry/privacy.py.",
+  "evidence_generated_utc": "2026-10-01T09:37:50.943225+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

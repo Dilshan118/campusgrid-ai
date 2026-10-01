@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S1-07",
+  "test_objective": "Test normalization and filtering of Unicode homoglyphs and zero-width non-printable characters.",
+  "attack_scenario": "dr\\u043ep\\u200b table (Cyrillic 'o' + zero-width space)",
+  "expected_behaviour": "Sanitizer normalizes Unicode via NFKC and strips non-printable category 'C' characters.",
+  "actual_behaviour": "Input cleansed: zero-width space removed; normalized representation generated.",
+  "evidence_log": "[Sanitizer] Raw length: 11 -> Cleaned length: 10 | Zero-width chars stripped.",
+  "severity_and_mitigation": "Severity: Low (CVSS 3.7). Mitigation: Unicodedata NFKC normalization strips invisible obfuscation tokens before NLP parsing.",
+  "evidence_generated_utc": "2026-10-01T09:37:47.684247+00:00",
+  "test_source": "tests/red_team_security_audits/test_student1_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

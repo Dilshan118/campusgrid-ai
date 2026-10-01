@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "review_policy": "Each source entry pins the SHA-256 of a maintainer-transcribed snapshot to an HTTPS PUCSL primary-source URL. Public uploads cannot alter this manifest through the API.",
+  "sources": {
+    "cf91cfac5acd9379ab26c7509d4a86e741d4f99669b4883fb301e5c637e6bbc0": {
+      "provenance_status": "verified_official",
+      "source_uri": "https://www.pucsl.gov.lk/electricity/tariff/general-tariff/",
+      "publisher": "Public Utilities Commission of Sri Lanka",
+      "document_title": "General Purpose Tariff, GP-2",
+      "effective_date": "2026-05-11",
+      "verified_at": "2026-10-01",
+      "verification_note": "Energy rates, time windows, GP-2 applicability, fixed charge, and maximum demand charge matched against PUCSL General Purpose Tariff page; effective date cross-checked against the May 2026 tariff decision."
+    }
+  }
+}

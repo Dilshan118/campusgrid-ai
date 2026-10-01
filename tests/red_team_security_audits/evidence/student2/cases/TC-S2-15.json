@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-15",
+  "test_objective": "Verify the privacy-protected export path implemented for this audit actually perturbs data rather than being a pass-through stub.",
+  "attack_scenario": "Compare get_privacy_protected_export() output against the raw repository read for the same date.",
+  "expected_behaviour": "Most of the 48 intervals differ from the raw reading (noise applied), and length/order (time_slots) is preserved so the export remains usable.",
+  "actual_behaviour": "48 of 48 intervals differ from raw readings.",
+  "evidence_log": "[TC-S2-15] raw[:3]=[180.0, 175.0, 170.0] protected[:3]=[143.5, 172.4, 203.4]",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.8). Mitigation: N/A — this test protects against a future refactor accidentally turning the export into a no-op.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.223639+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

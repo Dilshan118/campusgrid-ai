@@ -13,7 +13,7 @@ import { Banner, Button, IconButton } from './ui';
 
 // Navigation per spec §5. `match` decides which item is highlighted for a path.
 export const NAV_ITEMS = [
-  { to: '/', label: 'Overview', short: 'Home', group: 'Operate', icon: LayoutDashboard, permission: null, match: (p) => p === '/' },
+  { to: '/app', label: 'Overview', short: 'Home', group: 'Operate', icon: LayoutDashboard, permission: null, match: (p) => p === '/app' },
   { to: '/ask', label: 'Ask CampusGrid', short: 'Ask', group: 'Operate', icon: MessageSquare, permission: 'orchestrator:query', match: (p) => p === '/ask' },
   { to: '/what-if', label: 'What-if simulator', short: 'What-if', group: 'Operate', icon: Thermometer, permission: 'simulation:run', match: (p) => p === '/what-if' },
   { to: '/forecast', label: 'Forecast', short: 'Forecast', group: 'Operate', icon: LineChart, permission: 'telemetry:read', match: (p) => p === '/forecast' },
@@ -29,8 +29,8 @@ const NAV_GROUPS = ['Operate', 'Plans', 'Regulations', 'Oversight'];
 
 // The four most-used destinations per role, for the mobile tab bar.
 const MOBILE_PRIMARY = {
-  FACILITY_MANAGER: ['/', '/plans', '/ask', '/audit'],
-  OPERATOR: ['/ask', '/plans', '/what-if', '/'],
+  FACILITY_MANAGER: ['/app', '/plans', '/ask', '/audit'],
+  OPERATOR: ['/ask', '/plans', '/what-if', '/app'],
   ENERGY_AUDITOR: ['/audit', '/plans', '/regulations', '/analytics'],
 };
 
@@ -160,7 +160,7 @@ export function AppLayout({ path, children }) {
 
 function Brand({ compact = false }) {
   return (
-    <a href="#/" className={cn('flex items-center gap-2.5', !compact && 'px-5 py-5')}>
+    <a href="#/app" className={cn('flex items-center gap-2.5', !compact && 'px-5 py-5')}>
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-white">
         <BatteryCharging className="h-5 w-5" aria-hidden />
       </span>

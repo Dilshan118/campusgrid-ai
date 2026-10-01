@@ -10,12 +10,13 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response
 from src.domain.entities.analytics import AnalyticsEvent, EVENT_QUERY_SUBMITTED
 
 router = APIRouter(prefix="/api/orchestrator", tags=["Multi-Agent Orchestrator"])
 
-@router.post("/query", response_model=APIResponse)
+@router.post("/query", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def process_operator_query(
     request: OperatorQueryRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),

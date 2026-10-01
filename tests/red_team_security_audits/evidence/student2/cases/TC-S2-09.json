@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-09",
+  "test_objective": "Verify DP noise never yields physically impossible negative power readings.",
+  "attack_scenario": "Apply noise 500 times to a near-zero (0.5 kW) reading, a case where negative Laplace draws are common.",
+  "expected_behaviour": "All 500 noised readings remain >= 0.0 kW.",
+  "actual_behaviour": "0 of 500 noised readings were negative.",
+  "evidence_log": "[TC-S2-09] min_value=0.0",
+  "severity_and_mitigation": "Severity: Low (CVSS 2.5) — a negative reading would be an obvious data-quality tell, not a leak, but is still clamped defensively.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.083752+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

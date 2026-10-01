@@ -10,13 +10,14 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ALL_ROLES, ROLES_KNOWLEDGE_ADMINS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response
 from src.domain.entities.analytics import AnalyticsEvent, EVENT_SEARCH_PERFORMED
 from src.domain.entities.audit import RECORD_KNOWLEDGE_INGESTION
 
 router = APIRouter(prefix="/api/rag", tags=["Policy & RAG"])
 
-@router.post("/search", response_model=APIResponse)
+@router.post("/search", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def search_regulatory_clauses(
     request: RAGSearchRequest,
     user: Dict[str, Any] = Depends(require_roles(ALL_ROLES)),
@@ -45,7 +46,7 @@ def list_indexed_documents(
 ):
     return APIResponse(success=True, data=container.retrieval_service.index_stats())
 
-@router.post("/ingest", response_model=APIResponse)
+@router.post("/ingest", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def ingest_regulatory_document(
     request: RAGIngestRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_KNOWLEDGE_ADMINS)),

@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-13",
+  "test_objective": "Verify unseeded differential-privacy noise is genuinely non-deterministic across calls.",
+  "attack_scenario": "Call add_privacy_noise_batch() twice, unseeded, on the same 20-reading input and diff the outputs.",
+  "expected_behaviour": "The two batches differ (true randomness each call), so an attacker with knowledge of the mechanism cannot precompute and cancel the noise.",
+  "actual_behaviour": "Batches identical: False.",
+  "evidence_log": "[TC-S2-13] batch_1[:3]=[109.0, 170.4, 136.9] batch_2[:3]=[140.8, 156.7, 155.8]",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.3) if deterministic. Mitigation: default `seed=None` path uses a fresh random.Random() per call.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.118155+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

@@ -35,6 +35,7 @@ from src.infrastructure.database.repositories.meter_history_repository import In
 from src.infrastructure.tools.weather_tool import WeatherTool
 from src.domain.entities.telemetry import TelemetryInterval
 from src.domain.interfaces.llm import LLMProvider, LLMMessage, LLMResponse
+from tests.red_team_security_audits.evidence_writer import capture_case
 
 REQUIRED_SCHEMA_FIELDS = [
     "test_id", "test_objective", "attack_scenario",
@@ -46,6 +47,7 @@ def assert_schema(case: Dict[str, Any]):
     """Asserts the 7-point mandatory reporting schema is present."""
     for field in REQUIRED_SCHEMA_FIELDS:
         assert field in case, f"Missing mandatory 7-point schema field: {field}"
+    capture_case(case)
 
 
 def _sample_interval(base_load_kw: float = 40.0) -> TelemetryInterval:

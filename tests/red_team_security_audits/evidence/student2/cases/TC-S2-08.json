@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-08",
+  "test_objective": "Verify the epsilon parameter genuinely trades off privacy (noise magnitude) against utility, per the Laplace mechanism's math (scale = sensitivity/epsilon).",
+  "attack_scenario": "Compare noise standard deviation at epsilon=0.05 (strict privacy) vs epsilon=20.0 (weak privacy) for the same reading.",
+  "expected_behaviour": "Standard deviation at epsilon=0.05 is substantially larger than at epsilon=20.0.",
+  "actual_behaviour": "std(epsilon=0.05) = 325.6 kW, std(epsilon=20.0) = 1.2 kW.",
+  "evidence_log": "[TC-S2-08] tight_samples=[641.8, 713.6, 0.0] loose_samples=[299.8, 300.7, 300.0]",
+  "severity_and_mitigation": "Severity: Low (design verification, CVSS 3.1). Mitigation: N/A — confirms the mechanism is calibrated correctly, not a fake/no-op noise generator.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.070167+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

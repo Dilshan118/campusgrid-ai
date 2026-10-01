@@ -13,6 +13,7 @@ against poisoned or prompt-injected policy documents trying to zero out a tariff
 import re
 from typing import Dict, Any, List, Optional, Tuple
 from src.domain.interfaces.policy_extractor import RegulatoryRuleExtractorInterface
+from src.shared.datetime_utils import time_slot_to_index
 from src.shared.constants import (
     TARIFF_PEAK_LKR,
     TARIFF_DAY_LKR,
@@ -26,7 +27,7 @@ PROVENANCE_RETRIEVED = "retrieved"
 PROVENANCE_DEFAULT = "reference_default"
 PROVENANCE_REJECTED = "rejected_out_of_range"
 
-# Plausible bounds for a Sri Lankan GP-2 / I-2 tariff. Values outside are treated as corrupt.
+# Plausible bounds for the current Sri Lankan GP-2 schedule. Values outside are treated as corrupt.
 PLAUSIBLE_RANGES: Dict[str, Tuple[float, float]] = {
     "peak": (10.0, 200.0),
     "day": (5.0, 150.0),
@@ -46,9 +47,15 @@ REFERENCE_VALUES: Dict[str, float] = {
 }
 
 REFERENCE_WINDOWS: Dict[str, str] = {
-    "peak": "18:00 - 22:30",
-    "day": "05:30 - 18:00",
+    "peak": "18:30 - 22:30",
+    "day": "05:30 - 18:30",
     "off_peak": "22:30 - 05:30",
+}
+
+# Plausible window lengths in 30-minute slots (reference: peak 4.5 h, day 12.5 h).
+PLAUSIBLE_WINDOW_SLOTS: Dict[str, Tuple[int, int]] = {
+    "peak": (2, 16),   # 1 h to 8 h
+    "day": (12, 32),   # 6 h to 16 h
 }
 
 _MONEY = r"(\d+(?:\.\d+)?)"
@@ -94,8 +101,10 @@ class RegulatoryRuleExtractor(RegulatoryRuleExtractorInterface):
     """Extracts numeric constraints and time blocks from tariff and comfort documents."""
 
     def extract_tariff_rules(self, text: str) -> Dict[str, Any]:
-        """Extracts TOU electricity rates, demand penalty, and comfort bounds from retrieved text."""
-        return self.extract_from_passages([{"content": text, "section_clause": None}])
+        """Parses local text for screening/tests; production citations use extract_from_passages()."""
+        return self.extract_from_passages([
+            {"content": text, "section_clause": None, "provenance_status": "verified_official"}
+        ])
 
     def extract_from_passages(self, passages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Like extract_tariff_rules, but records which retrieved clause each figure came from.
@@ -108,6 +117,10 @@ class RegulatoryRuleExtractor(RegulatoryRuleExtractorInterface):
         windows: Dict[str, str] = {}
 
         for passage in passages:
+            # Retrieval is not authentication. Plausible figures from an unverified
+            # upload or fixture must never alter solver constraints.
+            if passage.get("provenance_status") != "verified_official":
+                continue
             content = passage.get("content") or ""
             source = passage.get("section_clause")
             if source and passage.get("document_title"):
@@ -132,12 +145,14 @@ class RegulatoryRuleExtractor(RegulatoryRuleExtractorInterface):
                 sources["min_temp_c"] = sources["max_temp_c"] = source
 
         values, provenance, warnings = self._validate(found)
+        windows, window_warnings = self._validate_windows(windows)
+        warnings += window_warnings
         for key in list(sources):
             if provenance.get(key) != PROVENANCE_RETRIEVED:
                 sources[key] = None
 
         return {
-            "schedule": "PUCSL GP-2 / Industrial I-2",
+            "schedule": "PUCSL General Purpose GP-2",
             "rates_lkr_kwh": {
                 "peak": values["peak"],
                 "day": values["day"],
@@ -155,6 +170,32 @@ class RegulatoryRuleExtractor(RegulatoryRuleExtractorInterface):
             "validation_warnings": warnings,
             "all_rates_retrieved": all(provenance[k] == PROVENANCE_RETRIEVED for k in ("peak", "day", "off_peak")),
         }
+
+    @staticmethod
+    def _validate_windows(windows: Dict[str, str]) -> Tuple[Dict[str, str], List[str]]:
+        """SEC-04: a retrieved window decides which intervals the solver prices at the peak rate, so
+        it is checked like a rate. An empty, implausibly short/long, or overlapping peak/day window
+        reverts both windows to the reference schedule with a warning (and is quarantined at ingestion)."""
+        if not windows:
+            return windows, []
+        merged = {k: windows.get(k, v) for k, v in REFERENCE_WINDOWS.items()}
+        slots: Dict[str, set] = {}
+        problems: List[str] = []
+        for key in ("peak", "day"):
+            start, end = (time_slot_to_index(part.strip()) for part in merged[key].split("-"))
+            length = (end - start) % 48
+            slots[key] = {(start + i) % 48 for i in range(length)}
+            low, high = PLAUSIBLE_WINDOW_SLOTS[key]
+            if not low <= length <= high:
+                problems.append(
+                    f"Retrieved {key} window '{merged[key]}' covers {length / 2:g} h, outside the plausible "
+                    f"[{low / 2:g}, {high / 2:g}] h"
+                )
+        if slots["peak"] & slots["day"]:
+            problems.append(f"Retrieved peak window '{merged['peak']}' overlaps the day window '{merged['day']}'")
+        if problems:
+            return {}, [p + "; using the reference tariff windows." for p in problems]
+        return windows, []
 
     @staticmethod
     def _validate(found: Dict[str, float]) -> Tuple[Dict[str, float], Dict[str, str], List[str]]:

@@ -1,0 +1,18 @@
+{
+  "benchmark": "tests/benchmark_ir_quality.py",
+  "query_count": 30,
+  "k": 2,
+  "embedding_provider": "mock",
+  "dataset": "curated labels against bundled markdown fixture corpus",
+  "metrics": {
+    "dense": {"precision_at_2": 0.267, "recall_at_2": 0.533, "mrr": 0.495, "ndcg_at_2": 0.410},
+    "bm25": {"precision_at_2": 0.500, "recall_at_2": 1.000, "mrr": 0.950, "ndcg_at_2": 0.963},
+    "hybrid": {"precision_at_2": 0.383, "recall_at_2": 0.767, "mrr": 0.711, "ndcg_at_2": 0.668}
+  },
+  "limitations": [
+    "Mock embeddings have no semantic signal; the dense result is diagnostic only.",
+    "The 30 queries and target clause labels are curated, not independently annotated or blind-held-out.",
+    "The corpus contains a hash-pinned maintainer transcription of the PUCSL GP-2 tariff schedule plus unverified comfort fixtures; the pin is not a publisher digital signature.",
+    "The benchmark measures clause ranking only, not answer faithfulness or whether a source is official."
+  ]
+}

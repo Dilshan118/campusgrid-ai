@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S4-15",
+  "test_objective": "Verify whether a tampered tool-call payload (arguments altered in transit) is detected before execution.",
+  "attack_scenario": "A legitimate request commanding 10.0kW HVAC is intercepted and rewritten to 999.0kW (still inside the per-value bounds, so bounds validation alone cannot catch it), then delivered to the server.",
+  "expected_behaviour": "A protocol with message integrity (e.g. HMAC over the canonical request body) should detect that the payload no longer matches what the legitimate client sent, and reject it.",
+  "actual_behaviour": "The server executed the TAMPERED command with no error: isError=False. No integrity check exists to distinguish the tampered request from the original.",
+  "evidence_log": "{\"tampered_request\": {\"jsonrpc\": \"2.0\", \"id\": 15, \"method\": \"tools/call\", \"params\": {\"name\": \"simulate_building_thermal_dynamics\", \"arguments\": {\"initial_temp_c\": 24.0, \"ambient_temps\": [24.0, 24.0, 24.0, 24.0], \"occupant_counts\": [50, 50, 50, 50], \"hvac_power_kw\": [999.0, 999.0, 999.0, 999.0]}}}, \"response\": {\"jsonrpc\": \"2.0\", \"id\": 15, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"{\\\"indoor_temperatures_c\\\": [14.06, 4.21, -5.55, -15.22], \\\"comfort_violation_count\\\": 4, \\\"max_temp_deviation_c\\\": 36.22, \\\"is_feasible\\\": false, \\\"min_observed_c\\\": -15.22, \\\"max_observed_c\\\": 14.06}\"}], \"isError\": false}}}",
+  "severity_and_mitigation": "Severity: High — a tampered-but-plausible value (999kW instead of 10kW) passes every bounds check yet is not what the legitimate client intended, and there is no way for the server to tell. Mitigation: sign each request with an HMAC over the canonical JSON body, keyed per-client, and reject any request whose signature does not match.",
+  "evidence_generated_utc": "2026-10-01T09:51:48.341838+00:00",
+  "test_source": "tests/red_team_security_audits/test_student4_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

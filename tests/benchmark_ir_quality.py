@@ -1,7 +1,7 @@
 """
 CampusGrid AI: Information Retrieval (IR) Benchmark Suite
 Evaluates Dense Vector, Sparse BM25, and Hybrid RRF search performance
-across a curated ground-truth test collection of Sri Lankan energy regulations & comfort standards.
+against curated labels for the repository's tariff and comfort fixture corpus.
 Computes standard IR metrics: Precision@k, Recall@k, Mean Reciprocal Rank (MRR), and NDCG@k.
 """
 
@@ -13,25 +13,25 @@ from src.domain.entities.rag import DocumentClause
 # 30 Curated Ground-Truth Regulatory Queries
 IR_BENCHMARK_DATASET = [
     # Category 1: Peak Tariffs & Windows
-    {"query": "What is the peak electricity tariff rate per kWh under GP-2?", "target_ref": "Clause 4.1"},
-    {"query": "Between what hours does the evening peak tariff apply in Sri Lanka?", "target_ref": "Clause 4.1"},
-    {"query": "How much does electricity cost during peak hours from 18:00 to 22:30?", "target_ref": "Clause 4.1"},
-    {"query": "Peak window surcharge rate in LKR for university microgrid", "target_ref": "Clause 4.1"},
-    {"query": "Are we advised to dispatch battery storage during 18:00 to 22:30?", "target_ref": "Clause 4.1"},
+    {"query": "What is the peak electricity tariff rate per kWh under GP-2?", "target_ref": "energy rates"},
+    {"query": "Between what hours does the evening peak tariff apply in Sri Lanka?", "target_ref": "energy rates"},
+    {"query": "How much does electricity cost during peak hours from 18:30 to 22:30?", "target_ref": "energy rates"},
+    {"query": "Peak window rate in LKR for university microgrid", "target_ref": "energy rates"},
+    {"query": "What is the GP-2 peak energy rate and period?", "target_ref": "energy rates"},
 
     # Category 2: Day & Off-Peak Tariffs
-    {"query": "What is the day-time tariff rate between 05:30 and 18:00?", "target_ref": "Clause 4.2"},
-    {"query": "Night time off-peak electricity price per unit", "target_ref": "Clause 4.2"},
-    {"query": "When should battery storage systems be charged according to tariff windows?", "target_ref": "Clause 4.2"},
-    {"query": "Is off-peak power billed at 15 LKR per kilowatt-hour?", "target_ref": "Clause 4.2"},
-    {"query": "Day and off peak energy charges schedule PUCSL", "target_ref": "Clause 4.2"},
+    {"query": "What is the day-time tariff rate between 05:30 and 18:30?", "target_ref": "energy rates"},
+    {"query": "Night time off-peak electricity price per unit under GP-2", "target_ref": "energy rates"},
+    {"query": "What are the GP-2 battery charging tariff windows?", "target_ref": "energy rates"},
+    {"query": "Is off-peak power billed at 15.40 LKR per kilowatt-hour?", "target_ref": "energy rates"},
+    {"query": "Day and off-peak energy charges in the PUCSL GP-2 schedule", "target_ref": "energy rates"},
 
     # Category 3: Maximum Demand Surcharge
-    {"query": "What is the monthly maximum demand charge per kVA?", "target_ref": "Clause 6.3"},
-    {"query": "Single highest 15-minute integrated demand penalty in LKR", "target_ref": "Clause 6.3"},
-    {"query": "What is the penalty for exceeding contract demand limit?", "target_ref": "Clause 6.3"},
-    {"query": "How to eliminate demand charges from simultaneous chiller startup?", "target_ref": "Clause 6.3"},
-    {"query": "1100 LKR per kVA tri-vector meter penalty clause", "target_ref": "Clause 6.3"},
+    {"query": "What is the monthly maximum demand charge per kVA under GP-2?", "target_ref": "Maximum demand charge"},
+    {"query": "Maximum demand charge amount in LKR per kVA", "target_ref": "Maximum demand charge"},
+    {"query": "What is the GP-2 maximum demand charge?", "target_ref": "Maximum demand charge"},
+    {"query": "PUCSL general purpose monthly demand charge schedule", "target_ref": "Maximum demand charge"},
+    {"query": "1100 LKR per kVA GP-2 maximum demand charge", "target_ref": "Maximum demand charge"},
 
     # Category 4: ASHRAE 55 Operative Temperature Bounds
     {"query": "What is the acceptable operative temperature envelope for lecture halls?", "target_ref": "Section 5.3"},
@@ -47,12 +47,12 @@ IR_BENCHMARK_DATASET = [
     {"query": "Maximum rate of operative temperature drift allowed per hour", "target_ref": "Section 6.2"},
     {"query": "1.1 C per hour drift limit during microgrid peak shaving", "target_ref": "Section 6.2"},
 
-    # Category 6: Solar PV Net Metering & Humidity
-    {"query": "Does exported solar energy offset the monthly Maximum Demand penalty?", "target_ref": "Clause 7.1"},
-    {"query": "Net metering rules for behind-the-meter rooftop solar PV systems", "target_ref": "Clause 7.1"},
+    # Category 6: ASHRAE Air Velocity & Humidity
     {"query": "Air velocity and draft sensations in air-conditioned lecture spaces", "target_ref": "Section 7.1"},
     {"query": "Relative humidity limits to prevent microbial growth in lecture halls", "target_ref": "Section 7.1"},
-    {"query": "Half-hourly net interval solar offsetting rules", "target_ref": "Clause 7.1"},
+    {"query": "What air speed range prevents draft discomfort in lecture rooms?", "target_ref": "Section 7.1"},
+    {"query": "What humidity range is stated for indoor classrooms?", "target_ref": "Section 7.1"},
+    {"query": "ASHRAE air velocity comfort guidance for teaching spaces", "target_ref": "Section 7.1"},
 ]
 
 

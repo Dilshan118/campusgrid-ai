@@ -9,6 +9,7 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response, default_planning_date, default_history_date
 from src.schemas.requests import ISO_DATE_PATTERN
 
@@ -33,7 +34,7 @@ def get_historical_telemetry(
         data=[item.model_dump() for item in intervals]
     )
 
-@router.get("/forecast", response_model=APIResponse)
+@router.get("/forecast", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def get_day_ahead_forecast(
     date: Optional[str] = Query(default=None, pattern=ISO_DATE_PATTERN, description="Defaults to tomorrow"),
     room: str = Query(default="LH-1", max_length=20),

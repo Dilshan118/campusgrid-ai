@@ -27,8 +27,17 @@ RECOMMENDATION_VALIDITY_HOURS = 24
 class AuditService:
     """Provides application-level audit logging, approval workflow and verification."""
 
-    def __init__(self, audit_repo: AuditLogRepository):
+    def __init__(
+        self,
+        audit_repo: AuditLogRepository,
+        signing_key: Optional[bytes] = None,
+        require_separate_approver: bool = False,
+        legacy_unkeyed_rows: int = 0,
+    ):
         self.audit_repo = audit_repo
+        self.signing_key = signing_key
+        self.legacy_unkeyed_rows = legacy_unkeyed_rows
+        self.require_separate_approver = require_separate_approver
         # Serialises "is there already a decision?" + "append the decision", so two managers
         # deciding the same plan at once cannot both succeed. (With PostgreSQL the unique index
         # uq_audit_one_decision_per_recommendation also enforces this across processes.)
@@ -166,6 +175,14 @@ class AuditService:
                 details={"log_id": log_id, "created_at": record.timestamp},
             )
 
+        # SEC-05: separation of duties. Always recorded; enforced when configured.
+        self_approved = approved and approver_id == record.user_id
+        if self_approved and self.require_separate_approver:
+            raise WorkflowConflictError(
+                f"Recommendation #{log_id} was requested by {record.user_id}; another facility manager must approve it.",
+                details={"log_id": log_id, "status": 403, "requested_by": record.user_id},
+            )
+
         notes = (notes or "").strip() or None
         if not approved and not notes:
             raise DomainException(
@@ -194,6 +211,7 @@ class AuditService:
                 "acknowledged_warnings": warnings if approved else [],
                 "net_savings_lkr": record.final_decision.get("net_savings_lkr"),
                 "requested_by": record.user_id,
+                "self_approved": self_approved,
             },
             human_approved=approved,
             record_type=RECORD_APPROVAL_DECISION,
@@ -208,6 +226,7 @@ class AuditService:
             "decided_by": approver_id,
             "decided_at": decision.timestamp,
             "notes": notes,
+            "self_approved": self_approved,
         }
 
     # ------------------------------------------------------------------
@@ -224,21 +243,31 @@ class AuditService:
         while legacy < len(records) and records[legacy].signature is None:
             legacy += 1
 
+        # SEC-09: with a signing key, rows are HMAC-signed. Unkeyed (plain SHA-256) rows are accepted
+        # only as the first `legacy_unkeyed_rows` rows (history written before the key existed).
+        # Any other unkeyed row means someone without the key wrote or re-signed it; without this
+        # anchor an attacker could re-sign the whole chain unkeyed and pass as "legacy history".
+        keyed = unkeyed = 0
+        first_invalid: Optional[int] = None
         for r in records[legacy:]:
-            expected = compute_audit_signature(r, previous)
-            if r.previous_signature != previous or r.signature != expected:
-                return {
-                    "valid": False,
-                    "records_checked": len(records) - legacy,
-                    "unsigned_legacy_records": legacy,
-                    "first_invalid_log_id": r.log_id,
-                }
+            is_keyed = bool(self.signing_key) and r.signature == compute_audit_signature(r, previous, self.signing_key)
+            unkeyed_allowed = not self.signing_key or (keyed == 0 and unkeyed < self.legacy_unkeyed_rows)
+            is_unkeyed = not is_keyed and unkeyed_allowed and r.signature == compute_audit_signature(r, previous)
+            if r.previous_signature != previous or not (is_keyed or is_unkeyed):
+                first_invalid = r.log_id
+                break
+            keyed += is_keyed
+            unkeyed += is_unkeyed
             previous = r.signature
         return {
-            "valid": True,
+            "valid": first_invalid is None,
             "records_checked": len(records) - legacy,
             "unsigned_legacy_records": legacy,
-            "first_invalid_log_id": None,
+            "first_invalid_log_id": first_invalid,
+            "signing_key_configured": bool(self.signing_key),
+            "keyed_records": keyed,
+            # Rows only a plain hash protects: anyone with database write access could have rewritten them.
+            "unkeyed_records": unkeyed,
         }
 
     @staticmethod

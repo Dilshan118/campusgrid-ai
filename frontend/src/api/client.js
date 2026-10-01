@@ -65,6 +65,7 @@ export const api = {
   logout: () => request('POST', '/api/auth/logout'),
   me: () => request('GET', '/api/auth/me'),
   health: () => request('GET', '/api/health', { auth: false }),
+  submitPilotInquiry: (payload) => request('POST', '/api/contact/pilot', { body: payload, auth: false }),
 
   // Planning
   ask: (payload, signal) => request('POST', '/api/orchestrator/query', { body: payload, signal }),

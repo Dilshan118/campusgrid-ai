@@ -84,3 +84,19 @@ class AnalyticsEventRequest(BaseModel):
     rank: Optional[int] = Field(default=None, ge=1, le=100)
     clause_reference: Optional[str] = Field(default=None, max_length=200)
 
+
+class PilotInquiryRequest(BaseModel):
+    """Public contact form payload. Personal data is emailed, never persisted by the API."""
+    full_name: str = Field(..., min_length=2, max_length=120)
+    organization: str = Field(..., min_length=2, max_length=160)
+    job_title: Optional[str] = Field(default=None, max_length=120)
+    email: str = Field(..., min_length=5, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    phone: Optional[str] = Field(default=None, max_length=30)
+    building_count: Optional[str] = Field(default=None, max_length=40)
+    monthly_bill_range: Optional[str] = Field(default=None, max_length=80)
+    has_solar: bool = False
+    has_battery: bool = False
+    metering_system: Optional[str] = Field(default=None, max_length=160)
+    message: Optional[str] = Field(default=None, max_length=1200)
+    website: Optional[str] = Field(default=None, max_length=200, description="Spam honeypot; leave blank")
+

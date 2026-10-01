@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-03",
+  "test_objective": "Verify DP noise masks small (5 kW) appliance-level signatures from a threshold-based NILM adversary.",
+  "attack_scenario": "Adversary observes many noised readings for two states 5kW apart and guesses which state each came from using the optimal midpoint threshold.",
+  "expected_behaviour": "Adversary accuracy should stay well below near-certain (a wide margin under 100%), since the noise scale (sensitivity/epsilon = 15 kW) dwarfs a 5 kW appliance signature.",
+  "actual_behaviour": "Adversary threshold-guess accuracy = 55.8% distinguishing a 5kW load delta.",
+  "evidence_log": "[TC-S2-03] threshold=202.5 off_mean=199.3 on_mean=205.6",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.5). Mitigation: sensitivity_kw=15.0 keeps noise scale large relative to typical single-appliance loads; do not lower it without re-running this test.",
+  "evidence_generated_utc": "2026-10-01T09:37:50.961552+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

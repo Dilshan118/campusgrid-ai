@@ -130,7 +130,7 @@ class Container:
             self.room_repo: RoomRepository = PostgresRoomRepository(engine)
             self.timetable_repo: TimetableRepository = PostgresTimetableRepository(engine)
             self.meter_repo: MeterHistoryRepository = PostgresMeterHistoryRepository(engine)
-            self.audit_repo: AuditLogRepository = PostgresAuditLogRepository(engine)
+            self.audit_repo: AuditLogRepository = PostgresAuditLogRepository(engine, signing_key=self.settings.audit_signing_key_bytes)
             self.analytics_repo: AnalyticsEventRepository = PostgresAnalyticsEventRepository(engine)
             self.vector_store: VectorStore = VectorStoreFactory.create(self.settings.vector_store, engine=engine)
         else:
@@ -138,7 +138,7 @@ class Container:
             self.room_repo = InMemoryRoomRepository()
             self.timetable_repo = InMemoryTimetableRepository()
             self.meter_repo = InMemoryMeterHistoryRepository()
-            self.audit_repo = InMemoryAuditLogRepository()
+            self.audit_repo = InMemoryAuditLogRepository(signing_key=self.settings.audit_signing_key_bytes)
             self.analytics_repo = InMemoryAnalyticsEventRepository()
             self.vector_store = VectorStoreFactory.create(self.settings.vector_store)
 
@@ -172,7 +172,12 @@ class Container:
             ingestion_pipeline=self.ingestion_pipeline,
             cache=self.cache_provider,
         )
-        self.audit_service = AuditService(audit_repo=self.audit_repo)
+        self.audit_service = AuditService(
+            audit_repo=self.audit_repo,
+            signing_key=self.settings.audit_signing_key_bytes,
+            legacy_unkeyed_rows=self.settings.audit_legacy_unkeyed_rows,
+            require_separate_approver=self.settings.require_separate_approver,
+        )
         self.analytics_service = AnalyticsService(event_repo=self.analytics_repo)
 
         # 5. Specialized Domain Agents

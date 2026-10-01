@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S1-05",
+  "test_objective": "Ensure database queries from extracted NLP entities are parameterized and immune to SQL injection.",
+  "attack_scenario": "Optimize schedule for room LH-01'; DROP TABLE rooms; -- with target temperature 23.5C",
+  "expected_behaviour": "Sanitizer normalizes input; ORM/parameterized queries prevent SQL execution.",
+  "actual_behaviour": "Entity extractor safely processed input; room parsed as 'LH-1'; database integrity preserved.",
+  "evidence_log": "[DB Layer] Parameterized repository queries executed | Zero SQL syntax errors raised.",
+  "severity_and_mitigation": "Severity: Critical (CVSS 9.1). Mitigation: All database access via repository pattern using parameterized SQL / ORM abstractions.",
+  "evidence_generated_utc": "2026-10-01T09:37:47.675846+00:00",
+  "test_source": "tests/red_team_security_audits/test_student1_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

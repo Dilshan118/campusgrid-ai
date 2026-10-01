@@ -17,7 +17,7 @@ def test_hybrid_rag_end_to_end(test_container):
 
     # Verify that GP-2 Peak clause is retrieved in top citations
     assert any("GP-2" in c["document_title"] for c in result["citations"])
-    assert any("Peak" in c["section_clause"] for c in result["citations"])
+    assert any("Peak" in c["content"] for c in result["citations"])
     # Mock embeddings carry no meaning, so the dense leg is skipped rather than fused as noise.
     expected_method = "hybrid_rrf" if service.dense_enabled else "sparse_bm25"
     assert result["citations"][0]["retrieval_method"] == expected_method
@@ -31,7 +31,8 @@ def test_corpus_bootstrap_loads_markdown_corpus(test_container):
     sources = {d["source_document"] for d in stats["documents"]}
     assert "PUCSL Electricity Tariff Schedule GP-2" in sources
     assert "ASHRAE Standard 55-2023" in sources
-    assert stats["total_clauses"] >= 7
+    assert stats["total_clauses"] >= 5
+    assert stats["clauses_by_provenance"].get("verified_official", 0) >= 2
 
 
 def test_raw_ingest_is_incremental_not_a_replacement():
@@ -48,7 +49,7 @@ def test_raw_ingest_is_incremental_not_a_replacement():
     assert service.index_stats()["total_clauses"] == before + 1
 
     peak = service.search("GP-2 peak energy charge LKR per kWh", top_k=2)
-    assert any("Clause 4.1" in c["section_clause"] for c in peak["citations"])
+    assert any("GP-2 Table" in c["section_clause"] for c in peak["citations"])
 
 
 def test_reingest_skips_duplicates():
