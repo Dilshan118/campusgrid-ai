@@ -136,7 +136,9 @@ Open `.env` and fill in:
    |---|---|---|---|
    | `admin` | `campusgrid2026` | `FACILITY_MANAGER` | everything, including **approving plans** and ingesting documents |
    | `operator` | `operator123` | `OPERATOR` | ask questions, run simulations and dispatch plans; cannot approve |
-   | `auditor` | `audit123` | `ENERGY_AUDITOR` | read-only: audit trail, regulations, analytics |
+   | `auditor` | `audit123` | `ENERGY_AUDITOR` | read-only: audit trail, regulations, analytics; second reviewer for new regulations |
+   | `timetable` | `timetable123` | `TIMETABLE_COORDINATOR` | faculty timetable office: upload and edit the semester timetable only |
+   | `works` | `works123` | `WORKS_ENGINEER` | Works / Maintenance Division: read approved plans and forecasts, record whether a plan was carried out |
 
    Five wrong passwords lock an account for five minutes. Passwords are stored as PBKDF2 hashes.
 
@@ -144,6 +146,25 @@ Open `.env` and fill in:
    `GET /api/audit/pending` → `POST /api/audit/approve` (manager only; a rejection needs a reason,
    and a plan with warnings needs `acknowledge_warnings: true`). `GET /api/audit/verify` checks the
    audit trail's hash chain.
+   After approval, the Works Division records the outcome with `POST /api/audit/execution`
+   (`completed` / `partial` / `not_executed`; anything short of completed needs a reason).
+
+   **Timetable.** There is no live timetable feed. The timetable office uploads the semester's
+   timetable as CSV on the Timetable page (`POST /api/timetable/upload`, validate with
+   `dry_run: true` first) or adds single sessions. Header:
+   `room_id,course_code,day,start_time,end_time,expected_students` — `day` is Mon..Sun or 1..7,
+   times are 24-hour HH:MM. Unknown rooms, over-capacity rows and clashing sessions are refused and
+   an upload applies completely or not at all.
+
+   **New regulations** go through `POST /api/rag/submissions` (publisher from `GET /api/rag/sources`,
+   reference, effective date, optional "replaces"), are screened but not indexed, and become
+   searchable only when a *different* facility manager or the energy auditor approves them at
+   `POST /api/rag/submissions/{id}/review`. `REGULATION_REVIEW_REQUIRED=false` re-enables the old
+   immediate `POST /api/rag/ingest` text path (the test suite uses this).
+
+   **Warning:** the repository's `.env` may point at a shared Neon database. Any script that imports
+   the app with default settings reads and writes it; use the pytest fixtures or set
+   `DATABASE_PROVIDER=in_memory VECTOR_STORE_PROVIDER=memory LLM_PROVIDER=mock EMBEDDING_PROVIDER=mock`.
 
 ---
 
