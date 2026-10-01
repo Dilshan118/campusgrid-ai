@@ -97,6 +97,12 @@ export const RECORD_TYPE_LABELS = {
   execution_report: 'Execution report',
 };
 
+export const EXECUTION_OUTCOME_LABELS = {
+  completed: 'Carried out as planned',
+  partial: 'Partly carried out',
+  not_executed: 'Not carried out',
+};
+
 export const INTENT_LABELS = {
   optimize_dispatch: 'Dispatch plan',
   what_if_simulation: 'What-if simulation',

@@ -93,6 +93,7 @@ export const api = {
     request('GET', `/api/audit/logs/${encodeURIComponent(id)}`, { query: { include_details: includeDetails } }),
   pending: (limit = 100) => request('GET', '/api/audit/pending', { query: { limit } }),
   decide: (payload) => request('POST', '/api/audit/approve', { body: payload }),
+  reportExecution: (payload) => request('POST', '/api/audit/execution', { body: payload }),
   verifyAudit: () => request('GET', '/api/audit/verify'),
 
   // Analytics
