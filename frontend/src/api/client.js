@@ -80,6 +80,12 @@ export const api = {
     request('POST', '/api/rag/search', { body: { query, top_k: topK, session_id: sessionId } }),
   regulationLibrary: () => request('GET', '/api/rag/documents'),
   ingestRegulation: (payload) => request('POST', '/api/rag/ingest', { body: payload, raw: true }),
+  regulationSources: () => request('GET', '/api/rag/sources'),
+  regulationSubmissions: (status) => request('GET', '/api/rag/submissions', { query: { status } }),
+  regulationSubmission: (id) => request('GET', `/api/rag/submissions/${encodeURIComponent(id)}`),
+  submitRegulation: (payload) => request('POST', '/api/rag/submissions', { body: payload }),
+  reviewRegulation: (id, payload) => request('POST', `/api/rag/submissions/${encodeURIComponent(id)}/review`, { body: payload }),
+
   // Timetable
   timetable: (day) => request('GET', '/api/timetable', { query: { day } }),
   uploadTimetable: (payload) => request('POST', '/api/timetable/upload', { body: payload }),
