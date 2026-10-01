@@ -14,11 +14,12 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response, default_planning_date
 
 router = APIRouter(prefix="/api/optimizer", tags=["Dispatch Optimizer"])
 
-@router.post("/dispatch", response_model=APIResponse)
+@router.post("/dispatch", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def solve_dispatch(
     request: OptimizationRunRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),

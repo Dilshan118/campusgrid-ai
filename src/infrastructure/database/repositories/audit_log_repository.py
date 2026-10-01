@@ -20,7 +20,8 @@ from src.domain.entities.audit import (
 class InMemoryAuditLogRepository(AuditLogRepository):
     """In-memory append-only audit trail."""
 
-    def __init__(self):
+    def __init__(self, signing_key: Optional[bytes] = None):
+        self.signing_key = signing_key
         self._logs: List[AuditRecord] = []
         self._counter = 1
         self._lock = threading.Lock()
@@ -29,7 +30,7 @@ class InMemoryAuditLogRepository(AuditLogRepository):
         with self._lock:
             previous = self._logs[-1].signature if self._logs else None
             record.previous_signature = previous
-            record.signature = compute_audit_signature(record, previous)
+            record.signature = compute_audit_signature(record, previous, self.signing_key)
             record.log_id = self._counter
             self._counter += 1
             # Store a copy so later mutation of the caller's object cannot rewrite history.
@@ -97,8 +98,9 @@ def _row_to_record(r) -> AuditRecord:
 class PostgresAuditLogRepository(AuditLogRepository):
     """PostgreSQL implementation of AuditLogRepository (table: audit_log_store in init.sql)."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, signing_key: Optional[bytes] = None):
         self.engine = engine
+        self.signing_key = signing_key
 
     def log_transaction(self, record: AuditRecord) -> int:
         with self.engine.begin() as conn:
@@ -108,7 +110,7 @@ class PostgresAuditLogRepository(AuditLogRepository):
                 text("SELECT signature FROM audit_log_store ORDER BY log_id DESC LIMIT 1;")
             ).scalar()
             record.previous_signature = previous
-            record.signature = compute_audit_signature(record, previous)
+            record.signature = compute_audit_signature(record, previous, self.signing_key)
             res = conn.execute(
                 text("""
                     INSERT INTO audit_log_store

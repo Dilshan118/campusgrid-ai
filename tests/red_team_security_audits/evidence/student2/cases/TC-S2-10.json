@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-10",
+  "test_objective": "Verify malformed/adversarial telemetry cannot be injected into the meter history store.",
+  "attack_scenario": "Attempt to construct a TelemetryInterval with negative load, negative tariff, and negative occupancy.",
+  "expected_behaviour": "Pydantic field validation (ge=0.0 / gt=0.0) rejects the record before it reaches storage.",
+  "actual_behaviour": "Construction raised a validation error, as expected.",
+  "evidence_log": "[TC-S2-10] pydantic ValidationError raised on negative base_load_kw/grid_tariff_lkr_kwh/zone_occupancy_count.",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.0). Mitigation: TelemetryInterval field constraints in src/domain/entities/telemetry.py enforce this at the domain boundary.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.089681+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

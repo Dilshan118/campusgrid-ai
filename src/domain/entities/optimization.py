@@ -21,18 +21,20 @@ class OptimizationInput(BaseModel):
     round_trip_efficiency: float = Field(default=0.92, gt=0.0, le=1.0)
     peak_demand_penalty_lkr_kva: float = Field(default=1100.0, description="Monthly peak surcharge")
     max_grid_import_kw: Optional[float] = Field(default=None, description="Maximum utility grid interconnect capacity in kW")
-    # Load tiers. When given, the three profiles partition base_load_kw interval by interval
-    # (tier0 + tier1 + tier2 == base_load_kw) and the solver enforces them:
-    #   Tier 0 is a fixed term in the power balance, so it can never be curtailed;
-    #   Tier 1 (air-conditioning) may move by at most tier1_max_reduction_ratio per interval and
-    #          must use the same energy over the day (pre-cool before the peak, recover after);
+    # Load tiers. When all three are given, they partition base_load_kw interval by interval
+    # (tier0 + tier1 + tier2 == base_load_kw) and the solver enforces the fairness rules
+    # (tier_guardrails.TierPolicy):
+    #   Tier 0 has no decision variable, so it can never be curtailed;
+    #   Tier 1 (air-conditioning) may be reduced only in peak-tariff intervals, by at most the
+    #          tighter of the policy's degree-based cap and tier1_max_reduction_ratio, and the
+    #          same energy is paid back later the same day;
     #   Tier 2 (pumps, EV chargers, ornamental lighting) may be moved to any interval, at no more
     #          than tier2_max_kw, again with the same daily energy.
     tier0_load_kw: Optional[List[float]] = Field(default=None, description="Non-curtailable critical load profile (kW)")
     tier1_load_kw: Optional[List[float]] = Field(default=None, description="Temperature-flexible load profile (kW)")
     tier2_load_kw: Optional[List[float]] = Field(default=None, description="Curtailable/shiftable load profile (kW)")
-    tier1_max_reduction_ratio: float = Field(default=0.0, ge=0.0, le=0.5, description="Largest per-interval Tier-1 change, as a fraction")
-    tier2_max_kw: Optional[float] = Field(default=None, gt=0, description="Rated power of the shiftable Tier-2 equipment; defaults to its profile's peak")
+    tier1_max_reduction_ratio: float = Field(default=0.0, ge=0.0, le=0.5, description="Largest per-interval Tier-1 change, as a fraction of its load")
+    tier2_max_kw: Optional[float] = Field(default=None, gt=0, description="Rated power of the shiftable Tier-2 equipment; defaults to the policy's multiple of its profile's peak")
     # Demand charge. PUCSL bills the month's highest demand in kVA; kVA = kW / power factor.
     power_factor: float = Field(default=1.0, gt=0.5, le=1.0, description="Site power factor (kW -> kVA)")
     month_to_date_peak_kva: Optional[float] = Field(

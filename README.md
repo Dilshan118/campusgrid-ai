@@ -3,7 +3,7 @@
 **Course Code:** IT 3041 – Information Retrieval and Web Analytics (IRWA)  
 **Academic Lead:** Mr. Samadhi Chathuranga Rathnayake  
 **Preferred GitHub Repository Name:** `campusgrid-ai`  
-**System Version:** Production v4.2  
+**System Version:** Prototype v4.2 (advisory; see implementation status for deployment limits)
 
 > ### 👉 New to this project? Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first.
 > It is the complete guide in plain English: what we are building, how the four agents work,
@@ -16,7 +16,7 @@
 ## 1. Project Overview
 **CampusGrid AI** is a distributed multi-agent cyber-physical energy management platform engineered specifically for university campuses and large institutional facilities. 
 
-It solves the **15-minute peak demand penalty trap** under Ceylon Electricity Board (CEB) / LECO industrial tariffs (such as **PUCSL GP-2** and **Industrial I-2**) by orchestrating rooftop solar PV, battery storage (BESS), and smart HVAC precooling through mathematical optimization (MILP), physics-based 2R2C thermal modeling, and grounded Explainable AI (XAI).
+It demonstrates demand-charge management for sites on Sri Lanka's PUCSL **General Purpose GP-2** schedule. Industrial I-2 is not covered by the current pinned tariff snapshot. It coordinates rooftop solar PV, battery storage (BESS), and HVAC plans through MILP optimization, a 2R2C thermal model, and source-labeled explanations.
 
 ```
                   THE 4-AGENT SEQUENTIAL PIPELINE
@@ -37,16 +37,17 @@ It solves the **15-minute peak demand penalty trap** under Ceylon Electricity Bo
 
 ## 2. Technology Stack & Key Frameworks
 
-Items marked **(planned)** are on the roadmap but not yet in the codebase. Everything else
-is implemented and covered by the test suite.
+The system has implemented, partial, and deployment-dependent capabilities. See
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for verified claim boundaries;
+the architecture/SRS documents also describe planned target features.
 
 * **Frontend:** React 18 Single Page Application, Vite, Tailwind CSS, Lucide React, Recharts.
 * **Backend Gateway:** FastAPI + Uvicorn. Each agent is reachable over its own REST endpoint.
 * **Tool protocol:** the digital-twin simulator and the weather tool are MCP tools, served as
   JSON-RPC 2.0 over HTTP at `POST /api/mcp` (`initialize`, `ping`, `tools/list`, `tools/call`).
-* **Orchestration:** Deterministic sequential Python pipeline with typed hand-offs between
-  agents. Intent parsing is rule-based today; **spaCy `en_core_web_sm` NER and LLM intent
-  routing are planned.** LangGraph was evaluated and deliberately not adopted — the pipeline
+* **Orchestration:** Deterministic Python pipeline with typed hand-offs between agents.
+  Rule-based intent/entity parsing runs first; a configured LLM may route low-confidence intents
+  to a closed action list. **spaCy `en_core_web_sm` NER is not wired into inference.** LangGraph was evaluated and deliberately not adopted — the pipeline
   has no cycles or conditional graph state, so it would add dependency weight without value.
 * **Database & Vector Search:** **Neon Serverless PostgreSQL 16** with the `pgvector` extension —
   relational tables and embeddings in one engine. ChromaDB and an in-memory store are also
@@ -128,6 +129,15 @@ Open `.env` and fill in:
    * `uvicorn backend.main:app` still works — it is a compatibility shim re-exporting the same app.
    * `GET /api/health` → `agent_slices` shows which agents run member code and which run a
      reference baseline (set with `REFERENCE_BASELINE_AGENTS`, e.g. `agent2`).
+
+### Pilot inquiry email
+The public website sends pilot inquiries to `PILOT_EMAIL_RECIPIENT` through the backend SMTP
+transport. The example recipient is `amasha.weerasuriya003@gmail.com`. To enable delivery, set
+`PILOT_SMTP_HOST`, `PILOT_SMTP_USERNAME`, `PILOT_SMTP_PASSWORD`, and `PILOT_EMAIL_FROM` in the
+backend environment. For Gmail SMTP, use `smtp.gmail.com:587`, enable STARTTLS, and use a Google
+App Password for the sending mailbox. Keep the password in deployment secrets or an untracked
+local `.env`; never set it as a `VITE_*` variable. If delivery is not configured, the endpoint
+returns a clear service-unavailable response and does not claim that the inquiry was sent.
 
 6. **Log in.** Every endpoint except `/api/health` and `/api/auth/login` needs
    `Authorization: Bearer <token>` (in Swagger, use the **Authorize** button). Demo accounts:

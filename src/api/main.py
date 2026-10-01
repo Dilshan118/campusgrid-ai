@@ -31,6 +31,7 @@ from src.api.routes import (
     auth_router,
     campus_router,
     mcp_router,
+    contact_router,
     timetable_router,
 )
 
@@ -83,5 +84,6 @@ app.include_router(analytics_router)
 app.include_router(audit_router)
 app.include_router(campus_router)
 app.include_router(mcp_router)
+app.include_router(contact_router)
 app.include_router(timetable_router)
 

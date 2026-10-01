@@ -5,14 +5,20 @@ Allows switching any infrastructure provider (LLM, Embeddings, Vector Store, Dat
 via environment variables with zero code modifications.
 """
 
+import logging
 import os
+import secrets
 from functools import lru_cache
 from typing import Optional, Set
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The JWT secret shipped in .env.example. Accepted for local development only.
+logger = logging.getLogger("campusgrid.config")
+
+# The JWT secret shipped in .env.example. Never used to sign tokens: outside production it is
+# swapped for a random per-process key, and production refuses to start with it.
 DEFAULT_JWT_SECRET = "campusgrid_super_secret_jwt_key_replace_in_production_32b"
+MIN_JWT_SECRET_CHARS = 32
 
 # Gemini 1.5 models are retired and no longer in LiteLLM's model catalogue.
 DEFAULT_LLM_MODEL = "gemini/gemini-3.5-flash"
@@ -117,6 +123,16 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     frontend_url: str = "http://localhost:5173"
 
+    # Public pilot inquiry email. Secrets are supplied only through the deployment environment.
+    pilot_smtp_host: Optional[str] = None
+    pilot_smtp_port: int = 587
+    pilot_smtp_username: Optional[str] = None
+    pilot_smtp_password: Optional[str] = None
+    pilot_smtp_starttls: bool = True
+    pilot_email_from: Optional[str] = None
+    pilot_email_recipient: str = "amasha.weerasuriya003@gmail.com"
+    pilot_email_timeout_seconds: float = 10.0
+
     # Flat environment variable mappings
     llm_provider: str = "mock"
     llm_model: str = DEFAULT_LLM_MODEL
@@ -155,6 +171,16 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 1_048_576
     login_max_failed_attempts: int = 5
     login_lockout_minutes: int = 5
+    # HMAC key for the audit hash chain (SEC-09). Keep it out of the database's reach; required in production.
+    audit_signing_key: Optional[str] = None
+    # Rows written before the key was configured (plain SHA-256). Set once, to the row count at the
+    # moment the key is introduced; any other unkeyed row fails verification. 0 for a new database.
+    audit_legacy_unkeyed_rows: int = 0
+    # SEC-05: when true, the manager who requested a plan cannot approve it (four-eyes rule).
+    # Off by default because the demo build has a single FACILITY_MANAGER account.
+    require_separate_approver: bool = False
+    # Per-user limit on the expensive planning endpoints (LLM + solver), requests per minute. 0 disables.
+    planner_rate_limit_per_minute: int = 30
 
     comfort_min_temp_c: float = 21.0
     comfort_max_temp_c: float = 25.5
@@ -209,11 +235,27 @@ class Settings(BaseSettings):
                 self.llm_provider = "mock"
             if "embedding_provider" not in values:
                 self.embedding_provider = "mock"
+            if "planner_rate_limit_per_minute" not in values:
+                self.planner_rate_limit_per_minute = 0  # the suite fires many requests per user
 
     @model_validator(mode="after")
     def _validate_production_safety(self) -> "Settings":
         if self.app_env == "production" and self.jwt_secret_key == DEFAULT_JWT_SECRET:
             raise ValueError("JWT_SECRET_KEY must be changed from the .env.example default in production.")
+        if self.app_env == "production" and len(self.jwt_secret_key) < MIN_JWT_SECRET_CHARS:
+            raise ValueError(f"JWT_SECRET_KEY must be at least {MIN_JWT_SECRET_CHARS} characters in production.")
+        if self.app_env == "production" and len(self.audit_signing_key or "") < MIN_JWT_SECRET_CHARS:
+            raise ValueError(
+                f"AUDIT_SIGNING_KEY must be set (at least {MIN_JWT_SECRET_CHARS} characters) in production, "
+                "otherwise anyone with database write access can rewrite the audit trail undetected."
+            )
+        if self.jwt_secret_key == DEFAULT_JWT_SECRET:
+            # SEC-02: the default is public (it is in the repository), so anyone could sign a
+            # FACILITY_MANAGER token with it. Outside production it is replaced by a random
+            # per-process key: nothing is ever signed with the public value. Set JWT_SECRET_KEY
+            # to keep sessions across restarts.
+            logger.warning("JWT_SECRET_KEY is the public example value; using a random per-process key instead.")
+            self.jwt_secret_key = secrets.token_urlsafe(48)
         unknown = self.baseline_agents - BASELINE_AGENT_KEYS
         if unknown:
             raise ValueError(
@@ -221,6 +263,10 @@ class Settings(BaseSettings):
                 f"allowed: {sorted(BASELINE_AGENT_KEYS)}"
             )
         return self
+
+    @property
+    def audit_signing_key_bytes(self) -> Optional[bytes]:
+        return self.audit_signing_key.encode("utf-8") if self.audit_signing_key else None
 
     @property
     def baseline_agents(self) -> Set[str]:

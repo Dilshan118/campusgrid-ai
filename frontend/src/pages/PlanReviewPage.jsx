@@ -161,7 +161,7 @@ function PlanReview({ record, reload }) {
                   <button type="button" onClick={() => openClause(c)}
                     className="flex w-full items-start gap-3 rounded-lg border border-line px-3 py-2 text-left text-sm hover:bg-surface-2">
                     <span className="rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium tabular">#{i + 1}</span>
-                    <span className="min-w-0"><span className="font-medium text-ink">{c.section_clause}</span><span className="block text-xs text-ink-2">{c.document_title}</span></span>
+                    <span className="min-w-0"><span className="font-medium text-ink">{c.section_clause}</span><span className="block text-xs text-ink-2">{c.document_title} · {c.provenance_status === 'verified_official' ? 'verified official source' : 'unverified reference'}</span></span>
                   </button>
                 </li>
               ))}

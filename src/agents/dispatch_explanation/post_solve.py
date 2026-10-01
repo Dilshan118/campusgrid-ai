@@ -29,7 +29,10 @@ def check_solution(
     served_t2: Optional[List[float]],
     eta: float,
     dt: float,
+    tier_bounds: Optional[Dict[str, List[float]]] = None,
 ) -> Dict[str, Any]:
+    """`tier_bounds` (required with `tiers`): the per-interval limits the solver was given —
+    tier1_low / tier1_high for served Tier 1 and tier2_high for served Tier 2 (kW)."""
     T = len(grid)
     failures: List[str] = []
 
@@ -38,19 +41,29 @@ def check_solution(
             slots = ", ".join(opt_input.time_slots[i] for i in intervals[:5])
             failures.append(f"{name} at {slots}" + (f" and {len(intervals) - 5} more" if len(intervals) > 5 else ""))
 
+    tier0_curtailed = None
     if tiers is None:
         served = list(opt_input.base_load_kw)
     else:
         t0, t1, t2 = tiers
-        served = [t0[i] + served_t1[i] + served_t2[i] for i in range(T)]
-        r = opt_input.tier1_max_reduction_ratio
+        # The load actually served is the campus forecast plus whatever the plan moved in or out.
+        served = [opt_input.base_load_kw[i] + (served_t1[i] - t1[i]) + (served_t2[i] - t2[i]) for i in range(T)]
+        # Tier 0 is curtailed where Tier 1 / Tier 2 give up more than the load above Tier 0 in the
+        # campus forecast (the split may differ from the forecast by its validation tolerance).
+        cut = [
+            max(0.0, max(0.0, t1[i] - served_t1[i]) + max(0.0, t2[i] - served_t2[i])
+                - max(0.0, opt_input.base_load_kw[i] - t0[i]))
+            for i in range(T)
+        ]
+        tier0_curtailed = round(max(cut, default=0.0), 2)
+        fail("Tier 0 (critical) load curtailed", [i for i in range(T) if cut[i] > _KW_TOLERANCE])
+        lo, hi = tier_bounds["tier1_low"], tier_bounds["tier1_high"]
         fail("Tier 1 outside its flexibility band",
-             [i for i in range(T) if not (t1[i] * (1 - r) - _KW_TOLERANCE <= served_t1[i] <= t1[i] * (1 + r) + _KW_TOLERANCE)])
+             [i for i in range(T) if not (lo[i] - _KW_TOLERANCE <= served_t1[i] <= hi[i] + _KW_TOLERANCE)])
         if abs(sum(served_t1) - sum(t1)) * dt > _ENERGY_TOLERANCE_KWH:
             failures.append("Tier 1 daily energy changed (air-conditioning energy must be shifted, not cut)")
-        cap = opt_input.tier2_max_kw or max(t2, default=0.0)
         fail("Tier 2 above its rated power",
-             [i for i in range(T) if served_t2[i] > max(cap, t2[i]) + _KW_TOLERANCE or served_t2[i] < -_KW_TOLERANCE])
+             [i for i in range(T) if served_t2[i] > tier_bounds["tier2_high"][i] + _KW_TOLERANCE or served_t2[i] < -_KW_TOLERANCE])
         if abs(sum(served_t2) - sum(t2)) * dt > _ENERGY_TOLERANCE_KWH:
             failures.append("Tier 2 daily energy changed")
 
@@ -76,6 +89,6 @@ def check_solution(
     return {
         "passed": not failures,
         "failures": failures,
-        "tier0_curtailed_kw": 0.0 if tiers is not None else None,  # Tier 0 has no decision variable
+        "tier0_curtailed_kw": tier0_curtailed,  # measured on the solution; None without tiers
         "checked_intervals": T,
     }

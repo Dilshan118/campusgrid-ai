@@ -39,7 +39,7 @@ def test_agent3_policy_rag(test_container):
 
     assert res.success is True
     assert len(res.data["citations"]) >= 1
-    assert res.data["peak_tariff_lkr"] == 58.00
+    assert res.data["peak_tariff_lkr"] == 26.60
 
 def test_agent4_dispatch_explanation(test_container):
     agent = test_container.agent4_dispatch

@@ -9,8 +9,12 @@ Re-running ingestion is safe: a clause already indexed under the same
 """
 
 import logging
+import hashlib
+import json
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from src.domain.interfaces.vector_store import VectorStore
 from src.domain.interfaces.embeddings import EmbeddingProvider
 from src.domain.interfaces.keyword_search import KeywordSearchEngine
@@ -25,6 +29,11 @@ SUPPORTED_SUFFIXES = (".md", ".txt", ".pdf")
 
 def _clause_key(clause: DocumentClause) -> str:
     return f"{clause.source_document.strip().lower()}|{clause.clause_reference.strip().lower()}"
+
+
+def _content_key(clause: DocumentClause) -> str:
+    normalized = re.sub(r"\s+", " ", clause.content).strip().casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 class DocumentIngestionPipeline:
@@ -56,10 +65,22 @@ class DocumentIngestionPipeline:
         files = sorted(p for p in target_dir.iterdir() if p.suffix.lower() in SUPPORTED_SUFFIXES)
         all_clauses: List[DocumentClause] = []
         file_errors: List[Dict[str, str]] = []
+        manifest = self._load_trusted_manifest(target_dir)
+        verified_source_count = 0
 
         for file_path in files:
             try:
-                all_clauses.extend(self._parse_file(file_path))
+                file_bytes = file_path.read_bytes()
+                source_digest = hashlib.sha256(file_bytes).hexdigest()
+                clauses = self._parse_file(file_path)
+                source_record = manifest.get(source_digest)
+                if source_record:
+                    verified_source_count += 1
+                for clause in clauses:
+                    clause.source_sha256 = source_digest
+                    clause.source_uri = source_record["source_uri"] if source_record else None
+                    clause.provenance_status = "verified_official" if source_record else "unverified"
+                all_clauses.extend(clauses)
             except Exception as e:
                 logger.warning("Failed reading %s: %s", file_path, e)
                 file_errors.append({"file": file_path.name, "error": type(e).__name__})
@@ -81,18 +102,44 @@ class DocumentIngestionPipeline:
             "rejected_clauses": result["rejected_clauses"],
             "file_errors": file_errors,
             "sources": sorted({c.source_document for c in all_clauses}),
+            "verified_source_files": verified_source_count,
         }
+
+    @staticmethod
+    def _load_trusted_manifest(target_dir: Path) -> Dict[str, Dict[str, str]]:
+        """Load hash-pinned, maintainer-reviewed source records; titles alone never qualify."""
+        manifest_path = target_dir / "trusted_sources.json"
+        if not manifest_path.is_file():
+            return {}
+        try:
+            records = json.loads(manifest_path.read_text(encoding="utf-8")).get("sources", {})
+        except (OSError, ValueError, TypeError):
+            logger.error("Trusted source manifest is unreadable; corpus files remain unverified.")
+            return {}
+        trusted: Dict[str, Dict[str, str]] = {}
+        for digest, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            uri = str(record.get("source_uri", ""))
+            parsed = urlparse(uri)
+            if (re.fullmatch(r"[a-f0-9]{64}", digest)
+                    and record.get("provenance_status") == "verified_official"
+                    and parsed.scheme == "https"
+                    and parsed.hostname in {"pucsl.gov.lk", "www.pucsl.gov.lk"}):
+                trusted[digest] = record
+        return trusted
 
     def preview_raw_text(self, text: str, source_document: str, effective_date: str) -> Dict[str, Any]:
         """Parses and screens text exactly as ingest_raw_text() would, but indexes nothing: the report a
         second reviewer sees before a submitted regulation can become active."""
         clauses = self._parse_raw(text, source_document, effective_date, force_source=True)
         accepted, rejected = self.screener.screen(clauses)
-        existing = {_clause_key(d) for d in self.keyword_engine.documents}
+        existing_keys = {_clause_key(d) for d in self.keyword_engine.documents}
+        existing_content = {_content_key(d) for d in self.keyword_engine.documents}
         return {
             "clauses_parsed": len(clauses),
             "clauses_accepted": len(accepted),
-            "already_indexed": sum(1 for c in accepted if _clause_key(c) in existing),
+            "already_indexed": sum(1 for c in accepted if _clause_key(c) in existing_keys or _content_key(c) in existing_content),
             "rejected_clauses": rejected,
             "clauses": [
                 {"clause_reference": c.clause_reference, "section_title": c.section_title, "content": c.content[:600]}
@@ -121,6 +168,13 @@ class DocumentIngestionPipeline:
         clauses = self._parse_raw(text, source_document, effective_date, force_source)
         if not clauses:
             return {"status": "error", "message": "No valid clauses could be parsed from text"}
+
+        for c in clauses:
+            # An uploader controls both the claimed title and text. Do not let either
+            # confer authority; status can only be raised by a future verified importer.
+            c.provenance_status = "unverified"
+            c.source_uri = None
+            c.content_sha256 = _content_key(c)
 
         result = self._index(clauses)
         added = result["clauses_added"]
@@ -158,14 +212,22 @@ class DocumentIngestionPipeline:
 
         existing_docs = self.keyword_engine.documents
         existing_keys = {_clause_key(d) for d in existing_docs}
+        existing_content = {_content_key(d) for d in existing_docs}
         new_clauses: List[DocumentClause] = []
         duplicates = 0
         for c in accepted:
             key = _clause_key(c)
-            if key in existing_keys:
+            digest = _content_key(c)
+            c.content_sha256 = digest
+            # Bundled files are reference fixtures, not independently authenticated sources.
+            if c.provenance_status != "verified_official":
+                c.provenance_status = "unverified"
+                c.source_uri = None
+            if key in existing_keys or digest in existing_content:
                 duplicates += 1
                 continue
             existing_keys.add(key)
+            existing_content.add(digest)
             new_clauses.append(c)
 
         if new_clauses:

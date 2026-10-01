@@ -75,7 +75,8 @@ class OptimizationRunRequest(BaseModel):
     # Flexible loads and billing state (all optional; omitted = site settings).
     hvac_flex_percent: Optional[float] = Field(
         default=None, ge=0, le=50,
-        description="How far air-conditioning load may move per half-hour, energy-neutral (0 = HVAC not flexed)",
+        description="How far air-conditioning load may be reduced in a peak-tariff half-hour, as a percentage; "
+                    "the same energy is used in off-peak half-hours of the same day (0 = HVAC not flexed)",
     )
     shiftable_load_kw: float = Field(default=0.0, ge=0, le=2000, description="Rated power of shiftable Tier-2 equipment (pumps, EV chargers)")
     shiftable_hours: float = Field(default=0.0, ge=0, le=24, multiple_of=0.5, description="Hours per day that equipment must run")
@@ -113,6 +114,21 @@ class AnalyticsEventRequest(BaseModel):
     rank: Optional[int] = Field(default=None, ge=1, le=100)
     clause_reference: Optional[str] = Field(default=None, max_length=200)
 
+
+class PilotInquiryRequest(BaseModel):
+    """Public contact form payload. Personal data is emailed, never persisted by the API."""
+    full_name: str = Field(..., min_length=2, max_length=120)
+    organization: str = Field(..., min_length=2, max_length=160)
+    job_title: Optional[str] = Field(default=None, max_length=120)
+    email: str = Field(..., min_length=5, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    phone: Optional[str] = Field(default=None, max_length=30)
+    building_count: Optional[str] = Field(default=None, max_length=40)
+    monthly_bill_range: Optional[str] = Field(default=None, max_length=80)
+    has_solar: bool = False
+    has_battery: bool = False
+    metering_system: Optional[str] = Field(default=None, max_length=160)
+    message: Optional[str] = Field(default=None, max_length=1200)
+    website: Optional[str] = Field(default=None, max_length=200, description="Spam honeypot; leave blank")
 
 class TimetableUploadRequest(BaseModel):
     """A whole timetable as CSV. Sent as lines, not one string: the sanitization middleware caps any

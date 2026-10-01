@@ -12,6 +12,7 @@ from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import (
     require_roles, ROLES_REGULATION_READERS, ROLES_KNOWLEDGE_ADMINS, ROLES_REGULATION_REVIEWERS,
 )
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.domain.exceptions.base import WorkflowConflictError
 from src.pipelines.document_ingestion.source_registry import list_sources
 from src.api.routes.common import agent_response
@@ -20,7 +21,7 @@ from src.domain.entities.audit import RECORD_KNOWLEDGE_INGESTION
 
 router = APIRouter(prefix="/api/rag", tags=["Policy & RAG"])
 
-@router.post("/search", response_model=APIResponse)
+@router.post("/search", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def search_regulatory_clauses(
     request: RAGSearchRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_REGULATION_READERS)),
@@ -49,7 +50,7 @@ def list_indexed_documents(
 ):
     return APIResponse(success=True, data=container.retrieval_service.index_stats())
 
-@router.post("/ingest", response_model=APIResponse)
+@router.post("/ingest", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def ingest_regulatory_document(
     request: RAGIngestRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_KNOWLEDGE_ADMINS)),

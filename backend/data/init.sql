@@ -88,10 +88,20 @@ CREATE TABLE IF NOT EXISTS document_clauses (
     section_title VARCHAR(255),
     effective_date DATE,
     content TEXT NOT NULL,
+    provenance_status VARCHAR(32) NOT NULL DEFAULT 'unverified',
+    source_uri TEXT,
+    content_sha256 VARCHAR(64),
+    source_sha256 VARCHAR(64),
     -- 768 dimensions matches Google gemini-embedding-001 / text-embedding-004.
     -- If using sentence-transformers/all-MiniLM-L6-v2, change this to vector(384).
     embedding vector(768)
 );
+
+-- Existing rows default to unverified; never promote legacy rows based on their titles.
+ALTER TABLE document_clauses ADD COLUMN IF NOT EXISTS provenance_status VARCHAR(32) NOT NULL DEFAULT 'unverified';
+ALTER TABLE document_clauses ADD COLUMN IF NOT EXISTS source_uri TEXT;
+ALTER TABLE document_clauses ADD COLUMN IF NOT EXISTS content_sha256 VARCHAR(64);
+ALTER TABLE document_clauses ADD COLUMN IF NOT EXISTS source_sha256 VARCHAR(64);
 
 -- Audit and Log Store (Encrypted at rest / Append-only)
 -- Column set must match src/infrastructure/database/repositories/audit_log_repository.py.

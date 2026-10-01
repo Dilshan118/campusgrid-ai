@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-11",
+  "test_objective": "Verify the day-ahead forecast API surface never includes per-device or per-person fields.",
+  "attack_scenario": "GET /api/telemetry/forecast and inspect every top-level response key.",
+  "expected_behaviour": "Only aggregate series (time_slots, forecast_demand_kw, forecast_solar_kw, bounds, anomaly_count, tariffs) are present.",
+  "actual_behaviour": "Response keys: ['ambient_temperatures_c', 'anomaly_count', 'campus_occupancy_counts', 'day_of_week', 'forecast_demand_kw', 'forecast_solar_kw', 'forecast_summary', 'lower_bound_kw', 'occupancy_counts', 'target_date', 'tariffs_lkr_kwh', 'time_slots', 'upper_bound_kw']; forbidden markers found: none.",
+  "evidence_log": "[TC-S2-11] sample={'forecast_demand_kw[0]': data.get('forecast_demand_kw', [None])[0]}",
+  "severity_and_mitigation": "Severity: High if violated (CVSS 7.0). Mitigation: PowerForecast/agent output schema is aggregate-only by construction (src/domain/entities/telemetry.py).",
+  "evidence_generated_utc": "2026-10-01T09:37:51.106877+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

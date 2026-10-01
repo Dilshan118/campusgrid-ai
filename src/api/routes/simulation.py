@@ -12,6 +12,7 @@ from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 from src.api.routes.common import agent_response, default_planning_date
 from src.agents.digital_twin.room_presets import build_venue_catalogue
 from src.agents.digital_twin.operating_hours import describe_operating_hours, occupied_mask, operating_hours_for
@@ -36,7 +37,7 @@ def list_venues(
     })
 
 
-@router.post("/what-if", response_model=APIResponse)
+@router.post("/what-if", response_model=APIResponse, dependencies=[Depends(limit_planner_requests)])
 def run_what_if_simulation(
     request: WhatIfSimulationRequest,
     user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),

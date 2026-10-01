@@ -24,6 +24,7 @@ import pytest
 from src.api.middleware.sanitization import sanitize_string, sanitize_data_structure
 from src.agents.policy_rag.rule_extractor import RegulatoryRuleExtractor
 from src.agents.coordinator.nlp_parser import NLPQueryParser
+from tests.red_team_security_audits.evidence_writer import capture_case
 
 REQUIRED_SCHEMA_FIELDS = [
     "test_id", "test_objective", "attack_scenario",
@@ -35,6 +36,7 @@ def assert_schema(case: Dict[str, Any]):
     """Helper asserting strict adherence to the 7-Point Security Audit Schema."""
     for field in REQUIRED_SCHEMA_FIELDS:
         assert field in case, f"Missing mandatory 7-point schema field: {field}"
+    capture_case(case)
 
 
 def test_tc_s1_01_direct_prompt_injection_override(test_container):
@@ -173,7 +175,7 @@ def test_tc_s1_06_indirect_prompt_injection_via_rag_corpus(test_container):
 
     # The injected 0.00 figures are outside the plausible reference ranges, so they are rejected
     # and the reference schedule is used instead — the attack cannot zero the tariff.
-    assert rules["rates_lkr_kwh"]["peak"] == 58.0, "Poisoned 0.00 LKR peak rate reached the solver inputs!"
+    assert rules["rates_lkr_kwh"]["peak"] == 26.6, "Poisoned 0.00 LKR peak rate reached the solver inputs!"
     assert rules["max_demand_penalty_lkr_kva"] == 1100.0, "Poisoned 0.00 LKR demand penalty was accepted!"
     assert rules["provenance"]["peak"] == "rejected_out_of_range"
     assert rules["validation_warnings"]

@@ -52,6 +52,8 @@ from src.agents.digital_twin.mcp_server import create_digital_twin_mcp_server, U
 from src.agents.digital_twin.mcp_integrity import MessageIntegrityGuard, sign_request
 from src.agents.digital_twin.thermal_model import BuildingThermalTwin
 from src.agents.digital_twin.validation import SeriesLengthMismatchError
+from src.shared.constants import TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR
+from tests.red_team_security_audits.evidence_writer import capture_case
 
 
 def execute_audit_test_case(case: Dict[str, Any]):
@@ -68,12 +70,7 @@ def execute_audit_test_case(case: Dict[str, Any]):
     ]
     for field in required_fields:
         assert field in case, f"Missing mandatory 7-point schema field: {field}"
-    evidence_dir = os.environ.get("AUDIT_EVIDENCE_DIR")
-    if evidence_dir:
-        os.makedirs(evidence_dir, exist_ok=True)
-        record = {**case, "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-        with open(os.path.join(evidence_dir, f"{case['test_id']}.json"), "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2, default=str)
+    capture_case(case)
 
 
 def _fresh_retrieval_service() -> RetrievalService:
@@ -102,8 +99,9 @@ def _off_peak_query() -> str:
 
 
 def _tariff_clause_text(off_peak_rate_lkr: float) -> str:
+    # Day rate and window from the verified GP-2 schedule, so only the off-peak figure is fabricated.
     return (
-        "Day-time energy consumption (05:30 to 18:00 hours) is billed at LKR 30.00 per kWh. "
+        f"Day-time energy consumption (05:30 to 18:30 hours) is billed at LKR {TARIFF_DAY_LKR:.2f} per kWh. "
         f"Off-peak energy consumption (22:30 to 05:30 hours) is billed at LKR {off_peak_rate_lkr:.2f} per kWh. "
         "Battery storage systems should be charged primarily during the off-peak window."
     )
@@ -114,7 +112,7 @@ def _tariff_clause_text(off_peak_rate_lkr: float) -> str:
 # =============================================================================
 
 def test_tc_s4_01_extreme_poison_is_blocked_by_clause_screening():
-    """TC-S4-01: An extreme fabricated rate (LKR 0.05/kWh vs the real LKR 15.00/kWh) is
+    """TC-S4-01: An extreme fabricated rate (LKR 0.05/kWh vs the real LKR 15.40/kWh) is
     submitted through the real ingestion path. This verifies a real mitigation the Team
     Lead has added since the previous audit pass: ClauseScreener quarantines clauses
     whose extracted regulatory figures fall outside a plausible reference range."""
@@ -132,7 +130,7 @@ def test_tc_s4_01_extreme_poison_is_blocked_by_clause_screening():
     case = {
         "test_id": "TC-S4-01",
         "test_objective": "Verify whether an extreme fabricated tariff figure submitted through the real document-ingestion path is caught before it becomes retrievable.",
-        "attack_scenario": "A document titled 'CEB_Tariff_2026_Official.pdf' claiming an off-peak rate of LKR 0.05/kWh (vs the real LKR 15.00/kWh) is submitted via RetrievalService.ingest_raw_document() — the actual front door for adding a document, not a direct vector-store write.",
+        "attack_scenario": "A document titled 'CEB_Tariff_2026_Official.pdf' claiming an off-peak rate of LKR 0.05/kWh (vs the real LKR 15.40/kWh) is submitted via RetrievalService.ingest_raw_document() — the actual front door for adding a document, not a direct vector-store write.",
         "expected_behaviour": "Ingestion should reject or flag a clause whose extracted tariff figure is wildly outside the plausible reference range before it is embedded or indexed.",
         "actual_behaviour": f"ingest_raw_document() returned status={ingest_result['status']!r}, rejected_clauses={ingest_result['rejected_clauses']}. The document never entered the index: poisoned_present_in_search={poisoned_present}.",
         "evidence_log": json.dumps(ingest_result, default=str)[:800],
@@ -145,12 +143,13 @@ def test_tc_s4_01_extreme_poison_is_blocked_by_clause_screening():
 
 def test_tc_s4_02_plausible_range_poison_bypasses_screening():
     """TC-S4-02: A subtler fabrication — wrong, but inside the plausible numeric range
-    the screener checks — is not caught, and reaches the same top-k window a facility
-    manager actually reads (RAG_TOP_K=2)."""
+    the screener checks — is not caught by screening. Verified-first trust ranking keeps it
+    out of the top-k window a facility manager actually reads (RAG_TOP_K=2), and wherever
+    it is retrieved it is labelled unverified."""
     svc = _fresh_retrieval_service()
     query = _off_peak_query()
 
-    # Real off-peak rate is LKR 15.00/kWh. LKR 8.00 is still wrong (a ~47% understatement)
+    # Real off-peak rate is LKR 15.40/kWh. LKR 8.00 is still wrong (a ~48% understatement)
     # but sits inside the [2.0, 100.0] plausible range the extractor validates against.
     ingest_result = svc.ingest_raw_document(
         text=_tariff_clause_text(8.00),
@@ -160,19 +159,24 @@ def test_tc_s4_02_plausible_range_poison_bypasses_screening():
     after = svc.search(query, top_k=2)
     citations = after["citations"]
     poisoned_entry = next((c for c in citations if c["document_title"] == "CEB_Tariff_2026_Official.pdf"), None)
+    wider = svc.search(query, top_k=4)["citations"]
+    poisoned_wider = next((c for c in wider if c["document_title"] == "CEB_Tariff_2026_Official.pdf"), None)
 
     case = {
         "test_id": "TC-S4-02",
         "test_objective": "Test whether the plausibility screen introduced since TC-S4-01 catches a materially wrong figure that is nonetheless inside the checked numeric range.",
-        "attack_scenario": "Same ingestion path as TC-S4-01, but the fabricated off-peak rate is LKR 8.00/kWh instead of LKR 0.05/kWh — still a ~47% understatement of the real LKR 15.00/kWh rate, but within the extractor's [2.0, 100.0] plausible range.",
+        "attack_scenario": "Same ingestion path as TC-S4-01, but the fabricated off-peak rate is LKR 8.00/kWh instead of LKR 0.05/kWh — still a ~48% understatement of the real LKR 15.40/kWh rate, but within the extractor's [2.0, 100.0] plausible range.",
         "expected_behaviour": "A range check alone should not be treated as a provenance/trust check — a wrong-but-plausible figure should still be flagged or require source verification.",
-        "actual_behaviour": f"ingest_raw_document() returned status={ingest_result['status']!r} (accepted). The poisoned document appears in the top_k=2 window a facility manager actually sees: {[c['document_title'] for c in citations]}, at rank {poisoned_entry['rank'] if poisoned_entry else 'not present'} with score {poisoned_entry['confidence_score'] if poisoned_entry else 'n/a'} — comparable to the authentic clause's score.",
-        "evidence_log": json.dumps(citations, default=str)[:800],
-        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5. Assessor's contextual rating: High — the range check gives false confidence; it stops obviously-absurd values but not a plausible-looking lie, which is the more realistic attack. Mitigation: pair the plausibility range with a verified-source allowlist or signature check, since numeric plausibility alone cannot establish trust.",
+        "actual_behaviour": f"ingest_raw_document() returned status={ingest_result['status']!r} (accepted — the screening gap remains). top_k=2 citations a facility manager sees: {[(c['document_title'], c.get('provenance_status')) for c in citations]}. In a top_k=4 window the poison is at rank {poisoned_wider['rank'] if poisoned_wider else 'not present'} with status {poisoned_wider.get('provenance_status') if poisoned_wider else 'n/a'}.",
+        "evidence_log": json.dumps(wider, default=str)[:800],
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5 before mitigation. The plausibility range alone still accepts a plausible-looking lie. Mitigation now in place: raw uploads are forced to 'unverified', the hash-pinned PUCSL GP-2 clause is ranked ahead of unverified text, and unverified passages cannot set tariff rules. Residual: the poison is still retrievable (labelled unverified) in wider windows, and the trust pin is maintainer-controlled rather than a publisher signature.",
     }
     execute_audit_test_case(case)
-    assert ingest_result["status"] == "success", "Expected the plausible-range poison to be accepted, demonstrating the gap"
-    assert poisoned_entry is not None, "Expected the poisoned document inside the actual top_k=2 window the manager reads"
+    assert ingest_result["status"] == "success", "Expected the plausible-range poison to be accepted, demonstrating the screening gap"
+    assert poisoned_entry is None, "Verified-first ranking must keep the poison out of the top_k=2 window the manager reads"
+    assert all(c["provenance_status"] == "verified_official" for c in citations)
+    if poisoned_wider is not None:
+        assert poisoned_wider["provenance_status"] == "unverified"
 
 
 # =============================================================================
@@ -215,8 +219,8 @@ def test_tc_s4_03_semantic_near_collision_via_hybrid_search():
 
 def test_tc_s4_04_vector_cluster_manipulation():
     """TC-S4-04: Multiple near-duplicate poisoned documents (each inside the plausible
-    numeric range so screening accepts them) crowd into the small top-k window
-    alongside the authentic clause, diluting what the facility manager actually reads."""
+    numeric range so screening accepts them) try to crowd the small top-k window the
+    facility manager actually reads. Verified-first ranking keeps the authentic clause there."""
     svc = _fresh_retrieval_service()
     query = _off_peak_query()
 
@@ -242,13 +246,13 @@ def test_tc_s4_04_vector_cluster_manipulation():
         "expected_behaviour": "At least one authentic source document should remain visible in the top-k window, and fake documents should not be indistinguishable from it.",
         "actual_behaviour": f"top_k=2 citations: {sources_top2} ({fake_count_top2} of 2 are fake; authentic present: {authentic_present_top2}). top_k=4 citations: {sources_top4}.",
         "evidence_log": json.dumps(result_top4["citations"], default=str)[:800],
-        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5. Assessor's contextual rating: High — fake documents occupy real estate in the trusted top-k window alongside the authentic clause, and nothing distinguishes them to a downstream consumer. Mitigation: deduplicate near-identical clauses by source diversity before ranking, or always include at least one result from a verified-source allowlist regardless of score.",
+        "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:N/I:H/A:N = 4.5 before mitigation. Mitigation verified for this fixture: verified sources are always retained as ranking candidates and ranked ahead of unverified text, so the five-document cluster does not displace the authentic clause from the top_k=2 window; the fakes still appear, labelled unverified, in wider windows. Test larger corpora and varied queries before claiming broader resistance.",
     }
     execute_audit_test_case(case)
-    assert fake_count_top2 >= 1, (
-        "Expected at least one fake document to occupy a slot in the top_k=2 window — "
-        "if this fails, the plausible-range screening gap has closed and the report claim needs updating"
-    )
+    assert fake_count_top2 == 0, "Verified-first ranking must keep the poison cluster out of the top_k=2 window"
+    assert authentic_present_top2, "The verified official tariff clause must remain in the top_k=2 window"
+    assert all(c["provenance_status"] == "unverified"
+               for c in result_top4["citations"] if c["document_title"].startswith("fake_doc_"))
 
 
 # =============================================================================
@@ -265,7 +269,7 @@ def _seed_vector_store_with_one_document() -> MemoryVectorStore:
     doc = DocumentClause(
         id=1, source_document="PUCSL Electricity Tariff Schedule GP-2",
         clause_reference="Clause 4.2", section_title="Day and Off-Peak Energy Charges",
-        content=_tariff_clause_text(15.00), effective_date="2024-07-01",
+        content=_tariff_clause_text(TARIFF_OFF_PEAK_LKR), effective_date="2024-07-01",
     )
     doc.embedding = embedding_provider.embed_text(doc.content)
     store.add_documents([doc])

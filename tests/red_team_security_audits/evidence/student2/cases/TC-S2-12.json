@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-12",
+  "test_objective": "Verify a compromised/malicious weather provider cannot exfiltrate occupancy or PII, because the tool never holds that data.",
+  "attack_scenario": "Inspect every field WeatherTool.execute() can possibly return.",
+  "expected_behaviour": "Only latitude/longitude/temperature_series_c/intervals_count/source fields exist — no occupancy or identity data path exists to leak.",
+  "actual_behaviour": "WeatherTool response keys: ['intervals_count', 'latitude', 'longitude', 'source', 'temperature_series_c']; forbidden markers found: none.",
+  "evidence_log": "[TC-S2-12] keys=['intervals_count', 'latitude', 'longitude', 'source', 'temperature_series_c']",
+  "severity_and_mitigation": "Severity: Low (CVSS 3.5) — architectural isolation, not a runtime check, is the control here.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.112352+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

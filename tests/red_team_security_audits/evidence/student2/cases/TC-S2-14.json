@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-14",
+  "test_objective": "Regression guard: the full 4-agent pipeline response must never contain PII-shaped keys anywhere in its (arbitrarily nested) payload.",
+  "attack_scenario": "POST /api/orchestrator/query with a normal operator question, then recursively scan the entire JSON response tree.",
+  "expected_behaviour": "No key anywhere in the response tree matches a PII marker (student_id, ssn, email, ...).",
+  "actual_behaviour": "Scanned full response tree; leaked paths: none.",
+  "evidence_log": "[TC-S2-14] top_level_keys=['data', 'error', 'execution_time_ms', 'success']",
+  "severity_and_mitigation": "Severity: High if any leak found (CVSS 7.4). Mitigation: no PII is ever ingested by any agent (data model is aggregate-only end to end), so there is nothing to leak by construction.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.215993+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

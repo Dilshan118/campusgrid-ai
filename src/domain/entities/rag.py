@@ -15,3 +15,9 @@ class DocumentClause(BaseModel):
     content: str
     effective_date: Optional[str] = None
     embedding: Optional[List[float]] = None
+    # Never inferred from a filename/title. Only a trusted ingestion verifier may set
+    # verified_official; current public uploads and bundled fixtures remain unverified.
+    provenance_status: str = "unverified"
+    source_uri: Optional[str] = None
+    content_sha256: Optional[str] = None
+    source_sha256: Optional[str] = None

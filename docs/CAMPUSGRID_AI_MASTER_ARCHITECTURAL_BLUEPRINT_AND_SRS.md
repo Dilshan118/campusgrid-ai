@@ -789,3 +789,6 @@ class WebAnalyticsEngine:
 
 ### Q18: Which parts of the coursework syllabus does this project satisfy?
 > **Answer:** "It satisfies the syllabus criteria: 4 intelligent interacting agents (the brief requires $\ge 2$), LLM integration for intent, explanation and faithfulness checking, explicit NLP (NER and summarisation), Information Retrieval (Hybrid RAG: pgvector dense + BM25 sparse + Reciprocal Rank Fusion), Web Analytics (query clustering, acceptance funnel, A/B testing), Security (JWT, RBAC, input sanitisation), defined agent communication protocols (REST per agent, MCP for tool calls), Responsible AI (tiered fairness, differential privacy, XAI faithfulness verification), and a Sri Lankan commercialization plan in LKR."
+# Status notice (read before using this target SRS)
+
+This document includes target-state design and coursework narrative; it is not a statement that every feature is deployed. For checked-in behavior and evidence, use [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). In particular, NER, TF-IDF/K-Means clustering, HTTPS/mTLS, WebSockets, and broad differential-privacy guarantees must not be presented as implemented without new code and deployment evidence.

@@ -555,14 +555,15 @@ def test_member3_room_time_constants_are_room_like():
 
 def test_member3_energy_cost_uses_cop_and_time_of_use_rates():
     from src.agents.digital_twin.energy_cost import estimate_hvac_energy
-    # 6.4 kW of cooling / COP 3.2 = 2 kW electric for two half-hours at 00:00 (off-peak LKR 15).
+    from src.shared.constants import TARIFF_OFF_PEAK_LKR, TARIFF_PEAK_LKR
+    # 6.4 kW of cooling / COP 3.2 = 2 kW electric for two half-hours at 00:00 (off-peak rate).
     energy = estimate_hvac_energy([6.4, 6.4] + [0.0] * 46)
     assert energy["electricity_kwh"] == 2.0
-    assert energy["cost_lkr"] == 30.0
+    assert energy["cost_lkr"] == pytest.approx(2.0 * TARIFF_OFF_PEAK_LKR)
     assert energy["peak_electric_kw"] == 2.0 and energy["peak_time"] == "00:00"
-    # The same draw at 19:00 is inside the 18:00-22:30 peak window (LKR 58).
+    # The same draw at 19:00 is inside the tariff's evening peak window.
     peak = estimate_hvac_energy([0.0] * 38 + [6.4] + [0.0] * 9)
-    assert peak["cost_lkr"] == 58.0 and peak["peak_in_tariff_peak_window"] is True
+    assert peak["cost_lkr"] == pytest.approx(TARIFF_PEAK_LKR) and peak["peak_in_tariff_peak_window"] is True
 
 def test_member3_room_simulation_reports_energy():
     result, _ = _occupied_run(num_acs=6)

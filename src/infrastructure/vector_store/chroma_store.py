@@ -47,7 +47,11 @@ class ChromaStore(VectorStore):
                 "source_document": doc.source_document,
                 "clause_reference": doc.clause_reference,
                 "section_title": doc.section_title or "",
-                "effective_date": doc.effective_date or ""
+                "effective_date": doc.effective_date or "",
+                "provenance_status": doc.provenance_status,
+                "source_uri": doc.source_uri or "",
+                "content_sha256": doc.content_sha256 or "",
+                "source_sha256": doc.source_sha256 or "",
             })
             documents_text.append(doc.content)
 
@@ -91,7 +95,11 @@ class ChromaStore(VectorStore):
                     clause_reference=meta.get("clause_reference", "Section"),
                     section_title=meta.get("section_title"),
                     content=content,
-                    effective_date=meta.get("effective_date")
+                    effective_date=meta.get("effective_date"),
+                    provenance_status=meta.get("provenance_status", "unverified"),
+                    source_uri=meta.get("source_uri") or None,
+                    content_sha256=meta.get("content_sha256") or None,
+                    source_sha256=meta.get("source_sha256") or None,
                 )
                 results.append(VectorSearchResult(clause=clause, similarity=similarity, distance=distance))
 
@@ -118,5 +126,9 @@ class ChromaStore(VectorStore):
                 section_title=meta.get("section_title"),
                 content=content,
                 effective_date=meta.get("effective_date") or None,
+                provenance_status=meta.get("provenance_status", "unverified"),
+                source_uri=meta.get("source_uri") or None,
+                content_sha256=meta.get("content_sha256") or None,
+                source_sha256=meta.get("source_sha256") or None,
             ))
         return docs

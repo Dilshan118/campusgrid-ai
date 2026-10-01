@@ -61,9 +61,10 @@ integration testing:
   ~210 kW, scaled per-day by a "clear sky factor" — 15% of days are randomly
   flagged overcast (0.35–0.6x yield), the rest are 0.85–1.05x, plus small
   per-interval noise.
-- **Tariff bands**: 18:00–23:00 = LKR 58.00/kWh (peak), before 06:00 = LKR
-  15.00/kWh (off-peak), else LKR 30.00/kWh (day) — matches the placeholder
-  bands already used by `InMemoryMeterHistoryRepository`'s synthetic fallback.
+- **Tariff bands**: the regenerated data uses the hash-pinned PUCSL GP-2 schedule
+  in `backend/rag/corpus/tariffs/trusted_sources.json`: peak 18:30–22:30 at
+  LKR 26.60/kWh, day 05:30–18:30 at LKR 21.80/kWh, off-peak 22:30–05:30 at
+  LKR 15.40/kWh. These tariffs do not enter the load-forecast model features.
 
 ## Known limitations (say this in the report)
 

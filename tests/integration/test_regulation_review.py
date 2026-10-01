@@ -104,8 +104,11 @@ def test_rejection_needs_a_reason_and_indexes_nothing(client, second_manager, te
 def test_superseded_document_drops_out_from_the_new_effective_date(client, second_manager, test_container):
     old_title = "PUCSL Electricity Tariff Schedule GP-2"
     assert old_title in _peak_citations(test_container, "2027-06-01")
+    # Its own text: identical text already indexed under another title is skipped as a duplicate,
+    # whatever title it is resubmitted under (ingest_corpus content-hash deduplication).
+    revision = [NEW_TARIFF[0], NEW_TARIFF[1], NEW_TARIFF[2].replace("LKR 61.00", "LKR 63.50")]
     sub = _submit(client, title="PUCSL Electricity Tariff Schedule GP-2 (2027)", supersedes=old_title,
-                  effective_date="2027-03-01").json()["data"]
+                  effective_date="2027-03-01", text_lines=revision).json()["data"]
     second_manager.post(f"/api/rag/submissions/{sub['submission_id']}/review", json={"approved": True})
 
     assert old_title in _peak_citations(test_container, "2027-02-28")

@@ -1,7 +1,8 @@
 """
 CampusGrid AI: Hybrid RAG Retrieval Service
 Orchestrates dense vector search and sparse BM25 keyword matching with Reciprocal Rank Fusion (RRF).
-Automatically bootstraps official PUCSL GP-2 tariffs and ASHRAE-55 comfort standard clauses.
+Bootstraps clauses labeled as PUCSL tariff and ASHRAE comfort reference fixtures. Their titles
+do not authenticate provenance; they remain unverified until checked by a trusted importer.
 
 All retrieval components are injected by the DI container, so this service depends only on
 domain interfaces (VectorStore, EmbeddingProvider, KeywordSearchEngine, Reranker).
@@ -30,36 +31,36 @@ DEFAULT_CORPUS_DIR = str(Path(__file__).resolve().parents[3] / "backend" / "rag"
 _FALLBACK_CLAUSES = [
     DocumentClause(
         source_document="PUCSL Electricity Tariff Schedule GP-2",
-        clause_reference="Clause 4.1 - Peak Time-of-Use Rate",
+        clause_reference="GP-2 Table - Peak Time-of-Use Rate",
         section_title="Peak Energy Charges",
         content=(
-            "Under General Purpose Tariff 2 (GP-2), consumption during the peak window (18:00 to 22:30 hours) "
-            "shall be billed at the unit rate of LKR 58.00 per kilowatt-hour (kWh). "
+            "Under General Purpose Tariff 2 (GP-2), consumption during the peak window (18:30 to 22:30 hours) "
+            "shall be billed at the unit rate of LKR 26.60 per kilowatt-hour (kWh). "
             "Institutions are advised to curtail non-critical HVAC loads or dispatch behind-the-meter battery storage."
         ),
-        effective_date="2024-07-01"
+        effective_date="2026-05-11"
     ),
     DocumentClause(
         source_document="PUCSL Electricity Tariff Schedule GP-2",
-        clause_reference="Clause 4.2 - Day & Off-Peak Rates",
+        clause_reference="GP-2 Table - Day & Off-Peak Rates",
         section_title="Day and Off-Peak Energy Charges",
         content=(
-            "Day-time energy consumption (05:30 to 18:00 hours) is billed at LKR 30.00 per kWh. "
-            "Off-peak energy consumption (22:30 to 05:30 hours) is billed at LKR 15.00 per kWh. "
+            "Day-time energy consumption (05:30 to 18:30 hours) is billed at LKR 21.80 per kWh. "
+            "Off-peak energy consumption (22:30 to 05:30 hours) is billed at LKR 15.40 per kWh. "
             "Battery storage systems should be charged primarily during the off-peak window."
         ),
-        effective_date="2024-07-01"
+        effective_date="2026-05-11"
     ),
     DocumentClause(
         source_document="PUCSL Electricity Tariff Schedule GP-2",
-        clause_reference="Clause 6.3 - Maximum Demand Penalty",
+        clause_reference="GP-2 Table - Maximum Demand Charge",
         section_title="Maximum Demand Surcharge",
         content=(
             "A monthly maximum demand charge of LKR 1,100.00 per kVA is levied on the single highest "
             "15-minute integrated demand recorded across the billing cycle. Demand spikes occurring during "
             "simultaneous chiller startup must be eliminated via peak shaving."
         ),
-        effective_date="2024-07-01"
+        effective_date="2026-05-11"
     ),
     DocumentClause(
         source_document="ASHRAE Standard 55-2023",
@@ -199,25 +200,41 @@ class RetrievalService:
         dense_candidates = [c for c in dense_candidates if self.in_force(c, as_of)][: top_k * 2]
 
         # 2. Sparse BM25 search
-        sparse_candidates = [c for c, _ in self.keyword_engine.search(query, top_k=fetch) if self.in_force(c, as_of)][: top_k * 2]
+        sparse_hits = [
+            (c, s) for c, s in self.keyword_engine.search(query, top_k=max(fetch, len(self.keyword_engine.documents)))
+            if self.in_force(c, as_of)
+        ]
+        sparse_candidates = [c for c, _ in sparse_hits[:top_k * 2]]
+
+        # Always retain verified sources as ranking candidates, even if a cluster of
+        # unverified near-duplicates occupies the ordinary top-k retrieval window.
+        verified_candidates = [c for c, _ in sparse_hits if c.provenance_status == "verified_official"]
+        known_keys = {_doc_key(c) for c in dense_candidates + sparse_candidates}
+        sparse_candidates.extend(c for c in verified_candidates if _doc_key(c) not in known_keys)
 
         # 3. Fusion
         ranked_lists = [dense_candidates, sparse_candidates] if dense_candidates else [sparse_candidates]
+        rerank_limit = max(top_k, len(dense_candidates) + len(sparse_candidates))
         if hasattr(self.reranker, "rerank_ranked_lists"):
-            rerank_results = self.reranker.rerank_ranked_lists(ranked_lists, top_k=top_k)
+            rerank_results = self.reranker.rerank_ranked_lists(ranked_lists, top_k=rerank_limit)
         else:
-            rerank_results = self.reranker.rerank(query, dense_candidates + sparse_candidates, top_k=top_k)
+            rerank_results = self.reranker.rerank(query, dense_candidates + sparse_candidates, top_k=rerank_limit)
 
         dense_keys = {_doc_key(c) for c in dense_candidates}
         sparse_keys = {_doc_key(c) for c in sparse_candidates}
         method = "hybrid_rrf" if dense_candidates else "sparse_bm25"
 
+        # Trust tier is a tie-breaker before relevance; title text is never evidence.
+        rerank_results = sorted(
+            rerank_results,
+            key=lambda res: (res.clause.provenance_status != "verified_official", -res.score),
+        )[:top_k]
         citations = []
-        for res in rerank_results:
+        for rank, res in enumerate(rerank_results, start=1):
             c = res.clause
             key = _doc_key(c)
             citations.append({
-                "rank": res.rank,
+                "rank": rank,
                 "clause_id": c.id,
                 "document_title": c.source_document,
                 "section_clause": c.clause_reference,
@@ -227,6 +244,10 @@ class RetrievalService:
                 "confidence_score": res.score,
                 "retrieval_method": method,
                 "matched_by": [m for m, keys in (("semantic", dense_keys), ("keyword", sparse_keys)) if key in keys],
+                "provenance_status": c.provenance_status,
+                "source_uri": c.source_uri,
+                "content_sha256": c.content_sha256,
+                "source_sha256": c.source_sha256,
             })
 
         return {
@@ -253,7 +274,7 @@ class RetrievalService:
                 force_source=force_source,
             )
             self._index_version += 1
-        return result
+        return {**result, "provenance_status": "unverified"}
 
     def ingest_clauses(self, clauses: List[DocumentClause]) -> Dict[str, Any]:
         """Indexes already-parsed clauses (screened and de-duplicated like any other source)."""
@@ -271,11 +292,14 @@ class RetrievalService:
     def index_stats(self) -> Dict[str, Any]:
         docs = self.keyword_engine.documents
         by_source: Dict[str, int] = {}
+        by_provenance: Dict[str, int] = {}
         for d in docs:
             by_source[d.source_document] = by_source.get(d.source_document, 0) + 1
+            by_provenance[d.provenance_status] = by_provenance.get(d.provenance_status, 0) + 1
         return {
             "total_clauses": len(docs),
             "vector_store_count": self.vector_store.count(),
             "documents": [{"source_document": k, "clauses": v} for k, v in sorted(by_source.items())],
+            "clauses_by_provenance": by_provenance,
             "dense_search_enabled": self.dense_enabled,
         }

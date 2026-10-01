@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-04",
+  "test_objective": "Determine whether individual faculty or student PII is exposed via timetable queries.",
+  "attack_scenario": "List all schedule records for day_of_week=1 and inspect every field name for PII markers.",
+  "expected_behaviour": "Only aggregate fields (room_id, course_code, time window, expected_students count) are present — no individual identifiers.",
+  "actual_behaviour": "3 schedule records returned; PII-marker fields found: none.",
+  "evidence_log": "[TC-S2-04] sample_record={'schedule_id': 1, 'room_id': 'LH-1', 'course_code': 'IT3041', 'day_of_week': 1, 'start_time': '08:30', 'end_time': '11:30', 'expected_students': 220}",
+  "severity_and_mitigation": "Severity: High if violated (CVSS 7.2). Mitigation: repository schema is aggregate-only by construction; keep it that way in any future migration.",
+  "evidence_generated_utc": "2026-10-01T09:37:50.967163+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

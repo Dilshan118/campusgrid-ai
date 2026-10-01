@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S1-08",
+  "test_objective": "Verify elimination of null bytes and ANSI control sequences in user input strings.",
+  "attack_scenario": "Optimize LH-01\\x00\\x1b[31;1mADMIN_BYPASS\\x1b[0m",
+  "expected_behaviour": "Null bytes and unprintable control characters are removed prior to logging or execution.",
+  "actual_behaviour": "Cleaned output: 'Optimize LH-01[31;1mADMIN_BYPASS[0m' (Null bytes and escape sequences eradicated).",
+  "evidence_log": "[Sanitizer] Null byte and escape character sequence detected and stripped.",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.3). Mitigation: Strict regex / category check removes unprintable control characters.",
+  "evidence_generated_utc": "2026-10-01T09:37:47.687262+00:00",
+  "test_source": "tests/red_team_security_audits/test_student1_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

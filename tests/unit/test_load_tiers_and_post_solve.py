@@ -70,12 +70,49 @@ def test_shiftable_load_moves_out_of_the_peak_and_flexibility_saves_money():
     assert flexible.net_savings_lkr > battery_only.net_savings_lkr
 
 
+def test_tier1_is_reduced_only_in_the_peak_window_by_the_tighter_cap():
+    """TierPolicy rules: Tier 1 is cut only in the highest-tariff half-hours and paid back
+    elsewhere; the cut is the tighter of the degree-based cap and the planner's ratio."""
+    from src.agents.dispatch_explanation.tier_guardrails import TierPolicy
+    tiers = _tiers()
+    peak = {i for i in range(48) if TARIFF[i] == max(TARIFF)}
+    ratio_only = CampusMicrogridOptimizer().solve(_input(**tiers, tier1_max_reduction_ratio=0.1))
+    for i, (served, planned) in enumerate(zip(ratio_only.served_tier1_kw, tiers["tier1_load_kw"])):
+        if i in peak:
+            assert planned * 0.9 - 0.01 <= served <= planned + 0.01
+        else:
+            assert planned - 0.01 <= served <= planned * 1.1 + 0.01
+    assert any(ratio_only.served_tier1_kw[i] < tiers["tier1_load_kw"][i] - 1.0 for i in peak)
+
+    # 10 kW per degree x 1.5 C = 15 kW, tighter than 10% of the ~220 kW peak-window Tier 1 load.
+    both = CampusMicrogridOptimizer(tier_policy=TierPolicy(tier1_kw_per_degree_c=10.0)).solve(
+        _input(**tiers, tier1_max_reduction_ratio=0.1))
+    assert max(p - s for s, p in zip(both.served_tier1_kw, tiers["tier1_load_kw"])) <= 15.0 + 0.01
+
+
+def test_shifted_tier2_never_exceeds_its_rated_power():
+    res = CampusMicrogridOptimizer().solve(_input(**_tiers(shift_kw=20.0, start="18:30"), tier2_max_kw=20.0))
+    assert max(res.served_tier2_kw) <= 20.0 + 0.01
+    assert res.post_solve_checks["passed"] is True
+
+
+def test_fairness_note_states_only_the_configured_tier1_limit():
+    from src.agents.dispatch_explanation.agent import DispatchExplanationAgent
+    report = {"enabled": True, "load_split_source": "synthetic",
+              "tier1": {"reduced_kwh": 5.0, "max_flex_c": 1.5, "kw_per_degree_c": None, "max_reduction_ratio": 0.1},
+              "tier2": {"shifted_kwh": 0.0}}
+    note = DispatchExplanationAgent._fairness_note(report)
+    assert "10% of the air-conditioning load" in note
+    assert "1.5 C" not in note  # no degree figure without the twin's kW per degree
+    assert "synthetic" in note
+
+
 def test_tiers_that_do_not_add_up_are_rejected():
     tiers = _tiers()
     tiers["tier0_load_kw"] = [v - 50 for v in tiers["tier0_load_kw"]]
     with pytest.raises(DomainException) as err:
         CampusMicrogridOptimizer().solve(_input(**tiers))
-    assert err.value.error_code == "OPTIMIZATION_INPUT_INVALID"
+    assert err.value.error_code == "TIER_LOAD_INVALID"  # tier_guardrails.TierLoads.validate_against
 
 
 def test_grid_import_limit_is_a_hard_constraint():
@@ -160,6 +197,12 @@ def test_hvac_flex_is_withdrawn_when_the_twin_rejects_it(member_container, monke
     assert plan["load_flexibility"]["hvac_flex_withdrawn"] is True
     assert plan["load_flexibility"]["hvac_flex_ratio"] == 0.0
     assert any("re-solved with HVAC flexibility off" in a for a in plan["assumptions"])
+
+
+def test_plan_reports_tier_dispatch_and_respects_rated_shiftable_power(member_container):
+    plan = _plan(member_container, hvac_flex_ratio=0.10, shiftable_load_kw=20, shiftable_hours=2, shiftable_usual_start="19:00")
+    assert max(plan["solver_summary"]["served_tier2_kw"]) <= 20.0 + 0.01
+    assert plan["solver_summary"]["post_solve_checks"]["tier0_curtailed_kw"] == 0.0
 
 
 def test_hvac_flex_off_skips_the_tier1_shift(member_container):

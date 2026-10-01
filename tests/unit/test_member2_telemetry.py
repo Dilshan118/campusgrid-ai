@@ -179,7 +179,15 @@ def test_trainer_beats_baseline_on_the_synthetic_dataset(tmp_path):
     output_path = str(tmp_path / "model_forecaster.json")
     metrics = trainer.train(output_model_path=output_path)
 
-    assert os.path.exists(output_path)
+    output_stem = os.path.splitext(output_path)[0]
+    if metrics["model_backend"] == "linear_regression":
+        artifact_path = output_path
+    else:
+        # Optional ML backends are stored outside the JSON path because the live
+        # forecaster currently loads only the dependency-free JSON artifact.
+        artifact_path = f"{output_stem}.{metrics['model_backend']}.joblib"
+        assert os.path.exists(f"{output_stem}.{metrics['model_backend']}.metrics.json")
+    assert os.path.exists(artifact_path)
     assert metrics["test_rmse_kw"] < metrics["baseline_test_rmse_kw"], (
         "Trained model must beat the simple statistical baseline on held-out days — "
         "this is the headline result for Developer 1's report."

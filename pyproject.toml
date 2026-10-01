@@ -56,6 +56,9 @@ nlp = [
 dev = [
     "pytest>=8.2.2",
     "httpx>=0.27.0",
+    # The digital-twin calibration tests import thermal_calibration, which fits with scipy.
+    "numpy>=1.26.4",
+    "scipy>=1.13.1",
 ]
 
 # What every team member should install:  pip install -e ".[all]"

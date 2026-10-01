@@ -179,14 +179,16 @@ def test_audit_hash_chain_detects_tampering():
 # Orchestrator routing & Agent 3 -> Agent 4 hand-off
 # ---------------------------------------------------------------------------
 
-def test_dispatch_uses_retrieved_tariffs_with_provenance(test_container):
+def test_dispatch_uses_hash_verified_pucsl_tariffs(test_container):
     res = test_container.orchestrator.execute({"query": "Precool Lecture Hall 1 to 23.5 C tomorrow", "user_id": "admin"})
     assert res.success
     tariff = res.data["recommendation"]["tariff_inputs"]
-    assert tariff["rates_lkr_kwh"] == {"peak": 58.0, "day": 30.0, "off_peak": 15.0}
+    assert tariff["rates_lkr_kwh"] == {"peak": 26.6, "day": 21.8, "off_peak": 15.4}
     assert all(tariff["provenance"][k] == "retrieved" for k in ("peak", "day", "off_peak", "max_demand_penalty_lkr_kva"))
-    assert "Clause 4.1" in tariff["source_clauses"]["peak"]
-    assert any("Clause 6.3" in c["section_clause"] for c in res.data["citations"])
+    assert all("GP-2 Table" in tariff["source_clauses"][k] for k in ("peak", "day", "off_peak", "max_demand_penalty_lkr_kva"))
+    pucl_citations = [c for c in res.data["citations"] if c["document_title"].startswith("PUCSL")]
+    assert pucl_citations and all(c["provenance_status"] == "verified_official" for c in pucl_citations)
+    assert all(c["source_uri"] == "https://www.pucsl.gov.lk/electricity/tariff/general-tariff/" for c in pucl_citations)
     assert res.data["explanation_concise"].startswith("Plan saves LKR")
 
 

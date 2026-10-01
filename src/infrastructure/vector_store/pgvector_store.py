@@ -43,8 +43,10 @@ class PgVectorStore(VectorStore):
                     res = conn.execute(
                         text("""
                             INSERT INTO document_clauses
-                            (source_document, clause_reference, section_title, content, effective_date, embedding)
-                            VALUES (:source, :clause_ref, :sec_title, :content, :eff_date, :embedding)
+                            (source_document, clause_reference, section_title, content, effective_date, embedding,
+                             provenance_status, source_uri, content_sha256, source_sha256)
+                            VALUES (:source, :clause_ref, :sec_title, :content, :eff_date, :embedding,
+                                    :provenance_status, :source_uri, :content_sha256, :source_sha256)
                             RETURNING id;
                         """),
                         {
@@ -53,7 +55,11 @@ class PgVectorStore(VectorStore):
                             "sec_title": doc.section_title or "",
                             "content": doc.content,
                             "eff_date": doc.effective_date,
-                            "embedding": str(doc.embedding) if doc.embedding else None
+                            "embedding": str(doc.embedding) if doc.embedding else None,
+                            "provenance_status": doc.provenance_status,
+                            "source_uri": doc.source_uri,
+                            "content_sha256": doc.content_sha256,
+                            "source_sha256": doc.source_sha256,
                         }
                     )
                     row = res.fetchone()
@@ -85,6 +91,7 @@ class PgVectorStore(VectorStore):
 
             query = f"""
                 SELECT id, source_document, clause_reference, section_title, content, effective_date,
+                       provenance_status, source_uri, content_sha256, source_sha256,
                        1 - (embedding <=> :query_vec) AS similarity
                 FROM document_clauses
                 {where_clause}
@@ -102,9 +109,11 @@ class PgVectorStore(VectorStore):
                         clause_reference=r[2],
                         section_title=r[3],
                         content=r[4],
-                        effective_date=str(r[5]) if r[5] else None
+                        effective_date=str(r[5]) if r[5] else None,
+                        provenance_status=r[6] or "unverified", source_uri=r[7], content_sha256=r[8],
+                        source_sha256=r[9]
                     )
-                    sim = float(r[6]) if r[6] is not None else 0.0
+                    sim = float(r[10]) if r[10] is not None else 0.0
                     results.append(VectorSearchResult(clause=clause, similarity=sim, distance=1.0 - sim))
             return results
         except Exception as e:
@@ -132,13 +141,15 @@ class PgVectorStore(VectorStore):
         try:
             with self.engine.connect() as conn:
                 rows = conn.execute(text(
-                    "SELECT id, source_document, clause_reference, section_title, content, effective_date "
+                    "SELECT id, source_document, clause_reference, section_title, content, effective_date, "
+                    "provenance_status, source_uri, content_sha256, source_sha256 "
                     "FROM document_clauses ORDER BY id;"
                 )).fetchall()
             return [
                 DocumentClause(
                     id=r[0], source_document=r[1], clause_reference=r[2], section_title=r[3],
                     content=r[4], effective_date=str(r[5]) if r[5] else None,
+                    provenance_status=r[6] or "unverified", source_uri=r[7], content_sha256=r[8], source_sha256=r[9],
                 )
                 for r in rows
             ]

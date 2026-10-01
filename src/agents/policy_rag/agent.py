@@ -1,7 +1,7 @@
 """
 CampusGrid AI: Agent 3 — Policy and Information Retrieval (IR · NLP · RAG)
 Executes hybrid search across PUCSL electricity tariffs and ASHRAE comfort standards.
-Emits verified regulatory constraints and citations for Agent 4's MILP solver and XAI explainer.
+Emits provenance-checked constraints and source-labeled citations for Agent 4.
 """
 
 from typing import Dict, Any, List, Optional
@@ -65,7 +65,11 @@ class PolicyRAGAgent(BaseAgent):
         if hasattr(self.rule_extractor, "extract_from_passages"):
             rules = self.rule_extractor.extract_from_passages(rule_sources)
         else:
-            rules = self.rule_extractor.extract_tariff_rules(" ".join(c.get("content", "") for c in rule_sources))
+            verified_text = " ".join(
+                c.get("content", "") for c in rule_sources
+                if c.get("provenance_status") == "verified_official"
+            )
+            rules = self.rule_extractor.extract_tariff_rules(verified_text)
 
         # Citations handed downstream: the operator's sources first, then any constraint clause not already listed.
         listed = {_citation_key(c) for c in citations_list}

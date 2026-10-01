@@ -13,11 +13,12 @@ from fastapi.responses import JSONResponse, Response
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
 from src.api.middleware.auth import require_roles, ROLES_PLANNERS
+from src.api.middleware.rate_limit import limit_planner_requests
 
 router = APIRouter(prefix="/api/mcp", tags=["Model Context Protocol"])
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(limit_planner_requests)])
 def mcp_json_rpc(
     message: Any = Body(..., description="One JSON-RPC 2.0 message (initialize, ping, tools/list, tools/call)"),
     _user=Depends(require_roles(ROLES_PLANNERS)),

@@ -7,6 +7,8 @@ built, what is missing, who does what, and the order we build it in.
 
 Written in plain English. Verified against the actual code on **25 September 2026**.
 
+> **Current claim/evidence boundary:** This guide describes both implemented and target features. For today's code and evaluation results, consult [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) and [`evaluation/RESULTS.md`](evaluation/RESULTS.md).
+
 | I want to know… | Go to |
 |---|---|
 | What are we building and why | [Section 1](#1-what-the-system-does) |

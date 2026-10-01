@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S2-05",
+  "test_objective": "Verify injection-shaped date parameters cannot crash the API or leak stack traces/internal paths.",
+  "attack_scenario": "Sent 4 injection-shaped payloads as the `date` query parameter to /api/telemetry/historical.",
+  "expected_behaviour": "API responds with a normal or client-error status; no Python traceback or filesystem path is ever echoed back.",
+  "actual_behaviour": "4 payloads sent; responses leaking internals: none.",
+  "evidence_log": "[TC-S2-05] payloads_tested=[\"2026-09-06'; DROP TABLE meter_history; --\", \"' OR '1'='1\", '../../etc/passwd', '2026-09-06\\x00']",
+  "severity_and_mitigation": "Severity: High if any leak found (CVSS 7.5). Mitigation: repository layer treats `date` as an opaque string key (in-memory) / bound SQL parameter (Postgres) — never interpolated into a query.",
+  "evidence_generated_utc": "2026-10-01T09:37:51.000761+00:00",
+  "test_source": "tests/red_team_security_audits/test_student2_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}

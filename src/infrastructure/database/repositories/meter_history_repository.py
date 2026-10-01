@@ -15,6 +15,8 @@ from typing import List, Optional
 from sqlalchemy import text
 from src.domain.interfaces.repositories import MeterHistoryRepository
 from src.domain.entities.telemetry import TelemetryInterval
+from src.shared.datetime_utils import get_tou_tariff_for_slot
+from src.shared.constants import TARIFF_PEAK_LKR, TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR
 
 
 class InMemoryMeterHistoryRepository(MeterHistoryRepository):
@@ -63,7 +65,9 @@ class InMemoryMeterHistoryRepository(MeterHistoryRepository):
                     base = 200.0 + (300.0 if 8 <= h <= 17 else 0.0)
                     solar = 150.0 if 9 <= h <= 15 else 0.0
                     temp = 26.0 + (5.0 if 10 <= h <= 15 else 0.0)
-                    tariff = 58.0 if 18 <= h < 23 else (15.0 if h < 6 else 30.0)
+                    tariff = get_tou_tariff_for_slot(
+                        slot, TARIFF_PEAK_LKR, TARIFF_DAY_LKR, TARIFF_OFF_PEAK_LKR
+                    )
                     self._records.append(TelemetryInterval(
                         time_slot=slot,
                         base_load_kw=base,

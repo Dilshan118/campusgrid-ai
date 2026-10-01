@@ -1,0 +1,14 @@
+{
+  "test_id": "TC-S1-09",
+  "test_objective": "Test guardrails against physical setpoint extremes attempting to damage HVAC systems or freeze occupants.",
+  "attack_scenario": "Precool to -50°C / Heat to 120°C",
+  "expected_behaviour": "Implausible setpoints (outside 18-30°C) are ignored and 24.0°C is used; plausible but out-of-band requests are clamped to the ASHRAE-55 band (21.0-25.5°C).",
+  "actual_behaviour": "Both out-of-bounds requests safely defaulted to 24.0°C standard operative setpoint.",
+  "evidence_log": "[NLP Parser] Out-of-bounds temperatures (-50°C, 120°C) rejected | Fallback target_temp_c=24.0 applied.",
+  "severity_and_mitigation": "Severity: Medium (CVSS 5.5). Mitigation: Range validation on physical entities in NLP query parser enforces ASHRAE comfort envelope.",
+  "evidence_generated_utc": "2026-10-01T09:37:47.690707+00:00",
+  "test_source": "tests/red_team_security_audits/test_student1_*.py",
+  "python_version": "3.12.10",
+  "embedding_provider": "mock",
+  "llm_provider": "mock"
+}
