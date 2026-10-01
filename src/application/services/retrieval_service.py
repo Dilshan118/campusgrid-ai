@@ -228,6 +228,13 @@ class RetrievalService:
             self._index_version += 1
         return result
 
+    def ingest_clauses(self, clauses: List[DocumentClause]) -> Dict[str, Any]:
+        """Indexes already-parsed clauses (screened and de-duplicated like any other source)."""
+        with self._ingest_lock:
+            result = self.ingestion_pipeline.ingest_clauses(clauses)
+            self._index_version += 1
+        return result
+
     def ingest_corpus_directory(self) -> Dict[str, Any]:
         with self._ingest_lock:
             result = self.ingestion_pipeline.ingest_directory(self.corpus_dir)
