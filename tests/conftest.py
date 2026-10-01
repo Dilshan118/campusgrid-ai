@@ -31,7 +31,10 @@ def test_settings() -> Settings:
         database_provider="in_memory",
         cache_provider="memory",
         reranker_strategy="rrf",
-        use_reference_baselines=True
+        use_reference_baselines=True,
+        # The screening / prompt-injection suites exercise the direct ingest path; the review
+        # workflow has its own tests that switch this back on.
+        regulation_review_required=False,
     )
 
 @pytest.fixture(scope="session")

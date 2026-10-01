@@ -46,6 +46,7 @@ class AuditService:
         approved: bool = False,
         record_type: str = RECORD_DISPATCH_RECOMMENDATION,
         approval_status: str = APPROVAL_NOT_REQUIRED,
+        parent_log_id: Optional[int] = None,
     ) -> int:
         record = AuditRecord(
             user_id=user_id,
@@ -55,6 +56,7 @@ class AuditService:
             human_approved=approved,
             record_type=record_type,
             approval_status=approval_status,
+            parent_log_id=parent_log_id,
         )
         return self.audit_repo.log_transaction(record)
 

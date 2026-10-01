@@ -83,21 +83,44 @@ class DocumentIngestionPipeline:
             "sources": sorted({c.source_document for c in all_clauses}),
         }
 
+    def preview_raw_text(self, text: str, source_document: str, effective_date: str) -> Dict[str, Any]:
+        """Parses and screens text exactly as ingest_raw_text() would, but indexes nothing: the report a
+        second reviewer sees before a submitted regulation can become active."""
+        clauses = self._parse_raw(text, source_document, effective_date, force_source=True)
+        accepted, rejected = self.screener.screen(clauses)
+        existing = {_clause_key(d) for d in self.keyword_engine.documents}
+        return {
+            "clauses_parsed": len(clauses),
+            "clauses_accepted": len(accepted),
+            "already_indexed": sum(1 for c in accepted if _clause_key(c) in existing),
+            "rejected_clauses": rejected,
+            "clauses": [
+                {"clause_reference": c.clause_reference, "section_title": c.section_title, "content": c.content[:600]}
+                for c in accepted[:100]
+            ],
+        }
+
+    def _parse_raw(self, text: str, source_document: str, effective_date: str, force_source: bool = False) -> List[DocumentClause]:
+        """`force_source` indexes every clause under `source_document` even if the text's own front
+        matter names another document (a reviewed submission must be indexed under its reviewed title)."""
+        clauses = self.chunker.parse_markdown(text, default_source=source_document)
+        for c in clauses:
+            if force_source or not c.source_document or c.source_document == "Regulatory Document":
+                c.source_document = source_document
+            c.effective_date = effective_date
+        return clauses
+
     def ingest_raw_text(
         self,
         text: str,
         source_document: str,
-        effective_date: str = "2024-01-01"
+        effective_date: str = "2024-01-01",
+        force_source: bool = False,
     ) -> Dict[str, Any]:
         """Ingests a raw text or markdown snippet directly."""
-        clauses = self.chunker.parse_markdown(text, default_source=source_document)
+        clauses = self._parse_raw(text, source_document, effective_date, force_source)
         if not clauses:
             return {"status": "error", "message": "No valid clauses could be parsed from text"}
-
-        for c in clauses:
-            if not c.source_document or c.source_document == "Regulatory Document":
-                c.source_document = source_document
-            c.effective_date = effective_date
 
         result = self._index(clauses)
         added = result["clauses_added"]

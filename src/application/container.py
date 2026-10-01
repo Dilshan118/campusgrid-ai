@@ -45,6 +45,7 @@ from src.application.services.retrieval_service import RetrievalService
 from src.application.services.audit_service import AuditService
 from src.application.services.analytics_service import AnalyticsService
 from src.application.services.timetable_service import TimetableService
+from src.application.services.regulation_review_service import RegulationReviewService
 from src.agents.telemetry.agent import TelemetryForecastingAgent
 from src.agents.digital_twin.agent import DigitalTwinAgent
 from src.agents.policy_rag.agent import PolicyRAGAgent
@@ -176,6 +177,10 @@ class Container:
         )
         self.audit_service = AuditService(audit_repo=self.audit_repo)
         self.analytics_service = AnalyticsService(event_repo=self.analytics_repo)
+        self.regulation_review_service = RegulationReviewService(
+            retrieval_service=self.retrieval_service, audit_service=self.audit_service,
+        )
+        self.regulation_review_service.replay_approved()
         self.timetable_service = TimetableService(
             timetable_repo=self.timetable_repo, room_repo=self.room_repo, audit_service=self.audit_service,
         )

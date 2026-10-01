@@ -3,13 +3,17 @@ CampusGrid AI: Policy & Standards RAG Router (Agent 3)
 Searches Ceylon Electricity Board / PUCSL tariffs and ASHRAE-55 comfort standards.
 """
 
-from typing import Dict, Any
-from fastapi import APIRouter, Depends
-from src.schemas.requests import RAGSearchRequest, RAGIngestRequest
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends, Query
+from src.schemas.requests import RAGSearchRequest, RAGIngestRequest, RegulationSubmissionRequest, RegulationReviewRequest
 from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
-from src.api.middleware.auth import require_roles, ROLES_REGULATION_READERS, ROLES_KNOWLEDGE_ADMINS
+from src.api.middleware.auth import (
+    require_roles, ROLES_REGULATION_READERS, ROLES_KNOWLEDGE_ADMINS, ROLES_REGULATION_REVIEWERS,
+)
+from src.domain.exceptions.base import WorkflowConflictError
+from src.pipelines.document_ingestion.source_registry import list_sources
 from src.api.routes.common import agent_response
 from src.domain.entities.analytics import AnalyticsEvent, EVENT_SEARCH_PERFORMED
 from src.domain.entities.audit import RECORD_KNOWLEDGE_INGESTION
@@ -57,6 +61,12 @@ def ingest_regulatory_document(
     Clauses with instruction-like text or implausible figures are quarantined, never indexed.
     """
     retrieval_service = container.retrieval_service
+    if request.text and container.settings.regulation_review_required:
+        raise WorkflowConflictError(
+            "New regulation text must be reviewed by a second person before it is indexed. "
+            "Submit it with POST /api/rag/submissions.",
+            details={"status": 409, "error": "REVIEW_REQUIRED"},
+        )
     if request.text:
         result = retrieval_service.ingest_raw_document(
             text=request.text,
@@ -80,3 +90,60 @@ def ingest_regulatory_document(
         data=result,
         error=None if success else (result.get("message") or "No clauses were indexed.")
     )
+
+
+# ---------------------------------------------------------------------------
+# Regulation lifecycle: trusted sources -> quarantined submission -> second-person review
+# ---------------------------------------------------------------------------
+
+@router.get("/sources", response_model=APIResponse)
+def list_trusted_sources(_user=Depends(require_roles(ROLES_REGULATION_READERS))):
+    """Publishers a regulation may come from, with the web domains their links must use."""
+    return APIResponse(success=True, data=list_sources())
+
+@router.post("/submissions", response_model=APIResponse)
+def submit_regulation(
+    request: RegulationSubmissionRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLES_KNOWLEDGE_ADMINS)),
+    container: Container = Depends(get_app_container)
+):
+    """Screen and quarantine a regulation document. Nothing is indexed until a second person approves it."""
+    return APIResponse(success=True, data=container.regulation_review_service.submit(
+        user_id=user["user_id"],
+        text="\n".join(request.text_lines),
+        title=request.title,
+        publisher=request.publisher,
+        reference=request.reference,
+        effective_date=request.effective_date,
+        source_url=request.source_url,
+        supersedes=request.supersedes,
+        filename=request.filename,
+    ))
+
+@router.get("/submissions", response_model=APIResponse)
+def list_regulation_submissions(
+    status: Optional[str] = Query(default=None, pattern=r"^(pending|approved|rejected)$"),
+    _user=Depends(require_roles(ROLES_REGULATION_READERS)),
+    container: Container = Depends(get_app_container)
+):
+    return APIResponse(success=True, data=container.regulation_review_service.list(status=status))
+
+@router.get("/submissions/{submission_id}", response_model=APIResponse)
+def get_regulation_submission(
+    submission_id: int,
+    _user=Depends(require_roles(ROLES_REGULATION_READERS)),
+    container: Container = Depends(get_app_container)
+):
+    return APIResponse(success=True, data=container.regulation_review_service.get(submission_id, include_text=True))
+
+@router.post("/submissions/{submission_id}/review", response_model=APIResponse)
+def review_regulation_submission(
+    submission_id: int,
+    request: RegulationReviewRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLES_REGULATION_REVIEWERS)),
+    container: Container = Depends(get_app_container)
+):
+    """Approve (index it) or reject a quarantined document. The submitter cannot review their own."""
+    return APIResponse(success=True, data=container.regulation_review_service.review(
+        submission_id, reviewer_id=user["user_id"], approved=request.approved, notes=request.notes,
+    ))

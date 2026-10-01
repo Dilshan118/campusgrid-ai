@@ -241,14 +241,16 @@ class RetrievalService:
         self,
         text: str,
         source_document: str = "Regulatory Document",
-        effective_date: str = "2024-01-01"
+        effective_date: str = "2024-01-01",
+        force_source: bool = False,
     ) -> Dict[str, Any]:
         """Ingests a raw policy text or markdown snippet into the active vector and keyword stores."""
         with self._ingest_lock:
             result = self.ingestion_pipeline.ingest_raw_text(
                 text=text,
                 source_document=source_document,
-                effective_date=effective_date
+                effective_date=effective_date,
+                force_source=force_source,
             )
             self._index_version += 1
         return result

@@ -172,6 +172,13 @@ class Settings(BaseSettings):
     hvac_flex_ratio: float = 0.10
     site_power_factor: float = 1.0
     max_grid_import_kw: Optional[float] = None
+    regulation_review_required: bool = Field(
+        default=True,
+        description=(
+            "New regulation text must go through POST /api/rag/submissions and a second reviewer before it is "
+            "indexed. False re-enables immediate indexing through POST /api/rag/ingest (tests, local corpus work)."
+        ),
+    )
     use_reference_baselines: bool = Field(
         default=False,
         description="When True, container falls back to reference baseline algorithms for agents 1, 2, 4"

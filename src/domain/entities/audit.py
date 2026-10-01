@@ -23,6 +23,9 @@ RECORD_OUT_OF_SCOPE = "out_of_scope_query"
 RECORD_KNOWLEDGE_INGESTION = "knowledge_ingestion"
 RECORD_APPROVAL_DECISION = "approval_decision"
 RECORD_TIMETABLE_UPDATE = "timetable_update"
+# A regulation document waiting in quarantine, and a second person's review of it.
+RECORD_KNOWLEDGE_SUBMISSION = "knowledge_submission"
+RECORD_KNOWLEDGE_REVIEW = "knowledge_review"
 # Appended by the Works Division after an approved plan was (or was not) carried out on site.
 RECORD_EXECUTION_REPORT = "execution_report"
 

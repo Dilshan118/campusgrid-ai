@@ -138,3 +138,28 @@ class ExecutionReportRequest(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=2000)
     deviations: Optional[str] = Field(default=None, max_length=2000,
                                       description="What was done differently from the plan (times, kW, rooms)")
+
+class RegulationSubmissionRequest(BaseModel):
+    """A regulation document for quarantine and second-person review. Sent as lines: the sanitization
+    middleware caps any single string at 10,000 characters."""
+    text_lines: List[str] = Field(..., min_length=1, max_length=20_000)
+    title: str = Field(..., min_length=3, max_length=255, description="Document title; a new version needs its own title (e.g. with its year)")
+    publisher: str = Field(..., min_length=2, max_length=20, description="Code from GET /api/rag/sources, e.g. PUCSL")
+    reference: str = Field(..., min_length=2, max_length=200, description="Gazette / decision / circular number")
+    effective_date: IsoDate = Field(..., pattern=ISO_DATE_PATTERN)
+    source_url: Optional[str] = Field(default=None, max_length=500)
+    supersedes: Optional[str] = Field(default=None, max_length=255, description="Title of the document this one replaces")
+    filename: Optional[str] = Field(default=None, max_length=200)
+
+    @field_validator("text_lines")
+    @classmethod
+    def bounded_text(cls, lines: List[str]) -> List[str]:
+        if sum(len(line) + 1 for line in lines) > 200_000:
+            raise ValueError("the document is longer than 200,000 characters")
+        if not "".join(lines).strip():
+            raise ValueError("the document is empty")
+        return lines
+
+class RegulationReviewRequest(BaseModel):
+    approved: bool
+    notes: Optional[str] = Field(default=None, max_length=2000)
