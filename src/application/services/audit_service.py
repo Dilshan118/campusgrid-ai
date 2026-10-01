@@ -12,6 +12,9 @@ from src.domain.entities.audit import (
     AuditRecord,
     RECORD_DISPATCH_RECOMMENDATION,
     RECORD_APPROVAL_DECISION,
+    RECORD_EXECUTION_REPORT,
+    EXECUTION_OUTCOMES,
+    EXECUTION_COMPLETED,
     APPROVAL_PENDING,
     APPROVAL_APPROVED,
     APPROVAL_REJECTED,
@@ -72,12 +75,21 @@ class AuditService:
 
     _NOT_LOOKED_UP = object()
 
-    def to_view(self, record: AuditRecord, include_agent_sequence: bool = True, decision: Any = _NOT_LOOKED_UP) -> Dict[str, Any]:
+    def to_view(
+        self,
+        record: AuditRecord,
+        include_agent_sequence: bool = True,
+        decision: Any = _NOT_LOOKED_UP,
+        execution: Any = _NOT_LOOKED_UP,
+    ) -> Dict[str, Any]:
         view = record.model_dump()
         if not include_agent_sequence:
             view.pop("agent_sequence", None)
+        is_plan = record.record_type == RECORD_DISPATCH_RECOMMENDATION
         if decision is AuditService._NOT_LOOKED_UP:
-            decision = self.audit_repo.get_decision_for(record.log_id) if record.record_type == RECORD_DISPATCH_RECOMMENDATION else None
+            decision = self.audit_repo.get_decision_for(record.log_id) if is_plan else None
+        if execution is AuditService._NOT_LOOKED_UP:
+            execution = self._execution_for([record.log_id]).get(record.log_id) if is_plan else None
         view["effective_status"] = self._effective_status(record, decision)
         if record.record_type == RECORD_DISPATCH_RECOMMENDATION:
             view["decision"] = None if decision is None else {
@@ -87,7 +99,19 @@ class AuditService:
                 "status": decision.approval_status,
                 "notes": decision.final_decision.get("notes"),
             }
+            view["execution"] = None if execution is None else {
+                "execution_log_id": execution.log_id,
+                "reported_by": execution.user_id,
+                "reported_at": execution.timestamp,
+                **{k: execution.final_decision.get(k) for k in ("outcome", "executed_on", "notes", "deviations")},
+            }
         return view
+
+    def _execution_for(self, log_ids: List[int]) -> Dict[int, AuditRecord]:
+        try:
+            return self.audit_repo.get_children_for(log_ids, RECORD_EXECUTION_REPORT)
+        except NotImplementedError:  # a repository written before execution reports existed
+            return {}
 
     def list_views(
         self,
@@ -98,12 +122,13 @@ class AuditService:
     ) -> List[Dict[str, Any]]:
         # Type is filtered by the repository; status is derived, so over-fetch when filtering on it.
         records = self.audit_repo.list_recent(limit=limit * 5 if status else limit, record_type=record_type)
-        decisions = self.audit_repo.get_decisions_for(
-            [r.log_id for r in records if r.record_type == RECORD_DISPATCH_RECOMMENDATION]
-        )
+        plan_ids = [r.log_id for r in records if r.record_type == RECORD_DISPATCH_RECOMMENDATION]
+        decisions = self.audit_repo.get_decisions_for(plan_ids)
+        executions = self._execution_for(plan_ids)
         views = []
         for r in records:
-            view = self.to_view(r, include_agent_sequence=include_agent_sequence, decision=decisions.get(r.log_id))
+            view = self.to_view(r, include_agent_sequence=include_agent_sequence,
+                                decision=decisions.get(r.log_id), execution=executions.get(r.log_id))
             if status and view["effective_status"] != status:
                 continue
             views.append(view)
@@ -209,6 +234,70 @@ class AuditService:
             "decided_at": decision.timestamp,
             "notes": notes,
         }
+
+    # ------------------------------------------------------------------
+    # Execution hand-off (Works Division)
+    # ------------------------------------------------------------------
+
+    def record_execution(
+        self,
+        log_id: int,
+        reporter_id: str,
+        outcome: str,
+        executed_on: Optional[str] = None,
+        notes: Optional[str] = None,
+        deviations: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Appends what actually happened on site for an approved plan. CampusGrid still operates
+        nothing: this closes the loop between "approved" and "carried out" in the audit trail."""
+        with self._decision_lock:
+            record = self.audit_repo.get_by_id(log_id)
+            if record is None:
+                raise EntityNotFoundError(entity_type="AuditRecord", identifier=log_id)
+            decision = self.audit_repo.get_decision_for(log_id) if record.record_type == RECORD_DISPATCH_RECOMMENDATION else None
+            if decision is None or decision.approval_status != APPROVAL_APPROVED:
+                raise WorkflowConflictError(
+                    f"Record #{log_id} is not an approved dispatch plan; only approved plans can be reported as executed.",
+                    details={"log_id": log_id},
+                )
+            existing = self._execution_for([log_id]).get(log_id)
+            if existing is not None:
+                raise WorkflowConflictError(
+                    f"Execution of plan #{log_id} was already reported ({existing.final_decision.get('outcome')}) "
+                    f"by {existing.user_id} at {existing.timestamp}.",
+                    details={"log_id": log_id, "execution_log_id": existing.log_id, "status": 409},
+                )
+            if outcome not in EXECUTION_OUTCOMES:
+                raise DomainException(
+                    message=f"outcome must be one of {', '.join(EXECUTION_OUTCOMES)}.",
+                    error_code="VALIDATION_ERROR", details={"status": 422, "field": "outcome"},
+                )
+            notes = (notes or "").strip() or None
+            deviations = (deviations or "").strip() or None
+            if outcome != EXECUTION_COMPLETED and not (notes or deviations):
+                raise DomainException(
+                    message="Say what was not carried out, and why, when the plan was not fully executed.",
+                    error_code="VALIDATION_ERROR", details={"status": 422, "field": "notes"},
+                )
+            report = AuditRecord(
+                user_id=reporter_id,
+                query_text=f"Execution report for plan #{log_id}",
+                agent_sequence={},
+                final_decision={
+                    "recommendation_log_id": log_id,
+                    "outcome": outcome,
+                    "executed_on": executed_on or record.final_decision.get("target", {}).get("date"),
+                    "notes": notes,
+                    "deviations": deviations,
+                    "approved_by": decision.user_id,
+                },
+                record_type=RECORD_EXECUTION_REPORT,
+                approval_status=APPROVAL_NOT_REQUIRED,
+                parent_log_id=log_id,
+            )
+            report_id = self.audit_repo.log_transaction(report)
+        return {"recommendation_log_id": log_id, "execution_log_id": report_id, "reported_by": reporter_id,
+                "reported_at": report.timestamp, **{k: report.final_decision[k] for k in ("outcome", "executed_on", "notes", "deviations")}}
 
     # ------------------------------------------------------------------
     # Tamper evidence

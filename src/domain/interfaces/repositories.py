@@ -85,6 +85,10 @@ class AuditLogRepository(ABC):
         """Appends an immutable, hash-chained audit record and returns its ID."""
         pass
 
+    def get_children_for(self, log_ids: List[int], record_type: str) -> Dict[int, AuditRecord]:
+        """{parent_log_id: first child row of `record_type`} (e.g. each plan's execution report)."""
+        raise NotImplementedError(f"{type(self).__name__} does not support get_children_for()")
+
     @abstractmethod
     def list_recent(self, limit: int = 50, record_type: Optional[str] = None) -> List[AuditRecord]:
         """Newest first, optionally only one record type."""

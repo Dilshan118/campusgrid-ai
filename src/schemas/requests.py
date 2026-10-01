@@ -120,3 +120,11 @@ class TimetableSessionRequest(BaseModel):
     start_time: str = Field(..., max_length=5, description="HH:MM, 24-hour")
     end_time: str = Field(..., max_length=5, description="HH:MM, 24-hour")
     expected_students: int = Field(..., ge=0, le=5000)
+
+class ExecutionReportRequest(BaseModel):
+    log_id: int = Field(..., ge=1, description="The approved dispatch plan")
+    outcome: str = Field(..., pattern=r"^(completed|partial|not_executed)$")
+    executed_on: Optional[IsoDate] = Field(default=None, pattern=ISO_DATE_PATTERN)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    deviations: Optional[str] = Field(default=None, max_length=2000,
+                                      description="What was done differently from the plan (times, kW, rooms)")
