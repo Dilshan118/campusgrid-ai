@@ -4,6 +4,7 @@ Provides what-if simulation and thermal dynamics evaluation.
 """
 
 from datetime import date
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 from src.schemas.requests import WhatIfSimulationRequest
@@ -15,6 +16,7 @@ from src.api.routes.common import agent_response, default_planning_date
 from src.agents.digital_twin.room_presets import build_venue_catalogue
 from src.agents.digital_twin.operating_hours import describe_operating_hours, occupied_mask, operating_hours_for
 from src.domain.exceptions.base import EntityNotFoundError
+from src.domain.entities.audit import RECORD_WHAT_IF_SIMULATION
 from src.shared.datetime_utils import campus_today
 
 router = APIRouter(prefix="/api/simulation", tags=["Digital Twin Simulation"])
@@ -37,7 +39,7 @@ def list_venues(
 @router.post("/what-if", response_model=APIResponse)
 def run_what_if_simulation(
     request: WhatIfSimulationRequest,
-    _user=Depends(require_roles(ROLES_PLANNERS)),
+    user: Dict[str, Any] = Depends(require_roles(ROLES_PLANNERS)),
     container: Container = Depends(get_app_container)
 ):
     target_date = default_planning_date(request.date)
@@ -86,4 +88,20 @@ def run_what_if_simulation(
     # Occupancy now comes from the room's own seats and operating hours, not the
     # building-wide meter, so nothing is capped any more; kept for API compatibility.
     response.data["occupancy_capped_intervals"] = 0
+    # Same record the Ask CampusGrid simulation branch writes, so every simulation shown is on the audit trail.
+    response.data["audit_log_id"] = container.audit_service.log_operator_action(
+        user_id=user["user_id"],
+        query=f"What-if simulator: {response.data['room']} on {target_date}",
+        agent_sequence={"agent2_digital_twin": res.model_dump()},
+        decision={
+            "summary": "What-if simulation (What-if simulator page).",
+            "target_date": target_date,
+            "room": response.data["room"],
+            "inputs": request.model_dump(),
+            "is_thermal_feasible": res.data.get("is_thermal_feasible"),
+            "comfort_violations_count": res.data.get("comfort_violations_count"),
+            "weather_source": response.data["weather_source"],
+        },
+        record_type=RECORD_WHAT_IF_SIMULATION,
+    )
     return response
