@@ -1,0 +1,4 @@
+# Corpus files are hash-pinned in backend/rag/corpus/tariffs/trusted_sources.json.
+# Keep them byte-identical on every OS (core.autocrlf would rewrite them to CRLF on Windows
+# and the provenance check would silently downgrade them to "unverified").
+backend/rag/corpus/** text eol=lf
