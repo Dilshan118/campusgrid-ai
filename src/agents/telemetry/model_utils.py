@@ -71,10 +71,9 @@ class LinearForecastModel:
     """
     A minimal multiple-linear-regression predictor, serializable to/from plain JSON.
 
-    Exists as the dependency-free fallback for environments where LightGBM /
-    scikit-learn are unavailable (see `train_forecaster.py`). Once those libraries
-    are installed, the trainer prefers a real gradient-boosted model instead and
-    this class is not used for prediction — only as the offline safety net.
+    This is the one model type the runtime serves: `train_forecaster.py` always trains and
+    saves it (a LightGBM challenger, when installed, is only evaluated alongside), and
+    `forecaster.py` loads it. Training and serving therefore always run the same model.
     """
 
     def __init__(self, weights: List[float], bias: float, means: List[float], stds: List[float]):
