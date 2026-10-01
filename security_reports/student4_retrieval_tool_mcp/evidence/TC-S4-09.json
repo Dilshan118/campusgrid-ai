@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-09",
+  "test_objective": "Verify negative occupancy \u2014 physically impossible \u2014 is rejected rather than silently producing negative heat gain.",
+  "attack_scenario": "MCP tools/call: simulate_building_thermal_dynamics(occupant_counts=[-999]).",
+  "expected_behaviour": "Reject negative occupancy at the boundary.",
+  "actual_behaviour": "Rejected with isError=True, error='occupant_count -999 outside plausible zone capacity [0, 5000]'",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"occupant_count -999 outside plausible zone capacity [0, 5000]\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N = 4.3 before mitigation. Assessor's contextual rating: Medium (would silently subtract heat from the room, masking a real thermal risk in feasibility checks). Mitigation implemented: occupant_count bounds-checked to [0, 5000] in SimulationTool._validate_bounds().",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

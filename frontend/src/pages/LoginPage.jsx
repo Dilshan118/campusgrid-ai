@@ -9,6 +9,8 @@ const DEMO_ACCOUNTS = [
   { username: 'admin', password: 'campusgrid2026', role: 'Facility Manager' },
   { username: 'operator', password: 'operator123', role: 'Operator' },
   { username: 'auditor', password: 'audit123', role: 'Energy Auditor' },
+  { username: 'timetable', password: 'timetable123', role: 'Timetable Coordinator' },
+  { username: 'works', password: 'works123', role: 'Works Engineer' },
 ];
 
 export default function LoginPage({ next }) {

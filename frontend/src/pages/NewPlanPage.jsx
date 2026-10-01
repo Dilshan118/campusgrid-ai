@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { BatteryCharging, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { api } from '../api/client';
 import { announcePlansChanged, useAsync } from '../lib/hooks';
 import { navigate } from '../lib/router';
 import { tomorrowIso } from '../lib/format';
-import { Banner, Button, Card, ErrorPanel, Field, PageHeader, Select, Slider, TextInput } from '../components/ui';
+import { Button, Card, ErrorPanel, Field, PageHeader, Select, Slider, TextInput } from '../components/ui';
 import { useToast } from '../components/feedback';
 
-const DEFAULTS = { capacity: 500, maxCharge: 100, maxDischarge: 100, startSoc: 50 };
+const DEFAULTS = {
+  capacity: 500, maxCharge: 100, maxDischarge: 100, startSoc: 50,
+  hvacFlex: 10, shiftKw: 0, shiftHours: 0, shiftStart: '08:00', mtdPeak: '', powerFactor: '',
+};
+const HALF_HOURS = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 
 export default function NewPlanPage() {
   const { notify } = useToast();
@@ -24,6 +28,10 @@ export default function NewPlanPage() {
     if (!(form.capacity > 0 && form.capacity <= 10000)) e.capacity = 'Enter a capacity between 1 and 10,000 kWh.';
     if (!(form.maxCharge > 0 && form.maxCharge <= 5000)) e.maxCharge = 'Enter a rate between 1 and 5,000 kW.';
     if (!(form.maxDischarge > 0 && form.maxDischarge <= 5000)) e.maxDischarge = 'Enter a rate between 1 and 5,000 kW.';
+    if (!(Number(form.shiftKw) >= 0 && Number(form.shiftKw) <= 2000)) e.shiftKw = 'Enter 0 to 2,000 kW.';
+    if (!(Number(form.shiftHours) >= 0 && Number(form.shiftHours) <= 24 && Number(form.shiftHours) * 2 % 1 === 0)) e.shiftHours = 'Enter 0 to 24 hours in half-hour steps.';
+    if (form.mtdPeak !== '' && !(Number(form.mtdPeak) >= 0)) e.mtdPeak = 'Enter the kVA from the bill, or leave it empty.';
+    if (form.powerFactor !== '' && !(Number(form.powerFactor) > 0.5 && Number(form.powerFactor) <= 1)) e.powerFactor = 'Enter a power factor between 0.51 and 1.';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -41,6 +49,12 @@ export default function NewPlanPage() {
         max_charge_rate_kw: Number(form.maxCharge),
         max_discharge_rate_kw: Number(form.maxDischarge),
         initial_soc_ratio: form.startSoc / 100,
+        hvac_flex_percent: form.hvacFlex,
+        shiftable_load_kw: Number(form.shiftKw) || 0,
+        shiftable_hours: Number(form.shiftHours) || 0,
+        shiftable_usual_start: form.shiftStart,
+        month_to_date_peak_kva: form.mtdPeak === '' ? undefined : Number(form.mtdPeak),
+        power_factor: form.powerFactor === '' ? undefined : Number(form.powerFactor),
       });
       announcePlansChanged();
       notify(`Plan #${data.audit_log_id} created`, { detail: 'It is waiting for a facility manager to approve it.' });
@@ -90,10 +104,37 @@ export default function NewPlanPage() {
             </div>
             <Slider id="soc" label="Starting battery level" min={20} max={90} step={5} value={form.startSoc} onChange={set('startSoc')}
               format={(v) => `${v}%`} marks={['20% safe minimum', '90% safe maximum']} />
-            <Banner tone="neutral" icon={BatteryCharging}>
-              These values are sent with the plan. The current optimiser version still applies the campus default battery
-              (500 kWh, 100 kW) until Agent 4 reads them — the plan review shows the limits actually used.
-            </Banner>
+            <p className="text-xs text-ink-2">The optimizer uses exactly these limits; the plan review shows them next to the schedule.</p>
+          </div>
+        </Card>
+        <Card title="Flexible loads" description="What else the plan may move besides the battery. Critical loads (labs, server rooms) are never curtailed.">
+          <div className="space-y-4">
+            <Slider id="hvac-flex" label="Air-conditioning flexibility" min={0} max={30} step={5} value={form.hvacFlex} onChange={set('hvacFlex')}
+              format={(v) => (v ? `±${v}% per half-hour` : 'Off')} marks={['Off', '±30%']}
+              hint="Pre-cool before the peak and ease off during it, using the same energy over the day. The digital twin re-checks comfort; if it fails, the plan is re-solved with this off." />
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Shiftable equipment (kW)" htmlFor="shift-kw" error={errors.shiftKw} hint="Pumps, EV chargers — 0 if none.">
+                <TextInput id="shift-kw" type="number" inputMode="decimal" min={0} max={2000} value={form.shiftKw} onChange={(e) => set('shiftKw')(e.target.value)} />
+              </Field>
+              <Field label="Hours it must run" htmlFor="shift-h" error={errors.shiftHours}>
+                <TextInput id="shift-h" type="number" inputMode="decimal" min={0} max={24} step={0.5} value={form.shiftHours} onChange={(e) => set('shiftHours')(e.target.value)} />
+              </Field>
+              <Field label="Normally starts" htmlFor="shift-start">
+                <Select id="shift-start" value={form.shiftStart} onChange={(e) => set('shiftStart')(e.target.value)}>
+                  {HALF_HOURS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </Select>
+              </Field>
+            </div>
+          </div>
+        </Card>
+        <Card title="Billing this month" description="Optional, from the latest CEB bill or meter reading. Makes the demand-charge saving exact instead of a 1/30 estimate.">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Highest demand so far this month (kVA)" htmlFor="mtd" error={errors.mtdPeak}>
+              <TextInput id="mtd" type="number" inputMode="decimal" min={0} value={form.mtdPeak} onChange={(e) => set('mtdPeak')(e.target.value)} placeholder="e.g. 780" />
+            </Field>
+            <Field label="Power factor" htmlFor="pf" error={errors.powerFactor} hint="Leave empty to use the site setting.">
+              <TextInput id="pf" type="number" inputMode="decimal" min={0.5} max={1} step={0.01} value={form.powerFactor} onChange={(e) => set('powerFactor')(e.target.value)} placeholder="e.g. 0.95" />
+            </Field>
           </div>
         </Card>
         <div className="flex justify-end">

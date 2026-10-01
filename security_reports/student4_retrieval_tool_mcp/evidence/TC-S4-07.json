@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-07",
+  "test_objective": "Verify the digital twin MCP tool enforces hard physical bounds even when prompted with an impossible temperature.",
+  "attack_scenario": "MCP tools/call: simulate_building_thermal_dynamics(initial_temp_c=-15.0, ...) \u2014 a value no real classroom sensor could report.",
+  "expected_behaviour": "The tool must reject the call at the boundary before running any physics.",
+  "actual_behaviour": "Rejected with isError=True, error='initial_temp_c=-15.0 outside physical envelope [10.0, 45.0]'",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"initial_temp_c=-15.0 outside physical envelope [10.0, 45.0]\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N = 6.5 before mitigation. Assessor's contextual rating: High if unmitigated (a -15C command could instruct real HVAC hardware to run in an undefined regime). Mitigation implemented: SimulationTool._validate_bounds() rejects any initial_temp_c or ambient_temp outside [10.0, 45.0]C before simulate() runs.",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

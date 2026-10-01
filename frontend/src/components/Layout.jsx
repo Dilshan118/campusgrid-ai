@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
-  BarChart3, BatteryCharging, BookOpen, ClipboardCheck, Library, LayoutDashboard, LineChart, LogOut, Menu,
+  BarChart3, BatteryCharging, BookOpen, CalendarDays, ClipboardCheck, Library, LayoutDashboard, LineChart, LogOut, Menu,
   MessageSquare, Monitor, Moon, MoreHorizontal, Plus, ServerCog, ShieldCheck, Sun, Thermometer, X,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
@@ -17,6 +17,7 @@ export const NAV_ITEMS = [
   { to: '/ask', label: 'Ask CampusGrid', short: 'Ask', group: 'Operate', icon: MessageSquare, permission: 'orchestrator:query', match: (p) => p === '/ask' },
   { to: '/what-if', label: 'What-if simulator', short: 'What-if', group: 'Operate', icon: Thermometer, permission: 'simulation:run', match: (p) => p === '/what-if' },
   { to: '/forecast', label: 'Forecast', short: 'Forecast', group: 'Operate', icon: LineChart, permission: 'telemetry:read', match: (p) => p === '/forecast' },
+  { to: '/timetable', label: 'Timetable', short: 'Timetable', group: 'Operate', icon: CalendarDays, permission: 'timetable:read', match: (p) => p === '/timetable' },
   { to: '/plans', label: 'Approvals', short: 'Approvals', group: 'Plans', icon: ClipboardCheck, permission: 'audit:read', badge: 'pending', match: (p) => p === '/plans' || /^\/plans\/\d+/.test(p) },
   { to: '/plans/new', label: 'New dispatch plan', short: 'New plan', group: 'Plans', icon: Plus, permission: 'optimizer:run', match: (p) => p === '/plans/new' },
   { to: '/regulations', label: 'Regulation search', short: 'Rules', group: 'Regulations', icon: BookOpen, permission: 'rag:search', match: (p) => p === '/regulations' },
@@ -32,6 +33,8 @@ const MOBILE_PRIMARY = {
   FACILITY_MANAGER: ['/app', '/plans', '/ask', '/audit'],
   OPERATOR: ['/ask', '/plans', '/what-if', '/app'],
   ENERGY_AUDITOR: ['/audit', '/plans', '/regulations', '/analytics'],
+  TIMETABLE_COORDINATOR: ['/timetable', '/app'],
+  WORKS_ENGINEER: ['/plans', '/forecast', '/timetable', '/app'],
 };
 
 // ---------------------------------------------------------------------------
@@ -68,7 +71,7 @@ export function AppLayout({ path, children }) {
   useEffect(() => { setMoreOpen(false); }, [path]);
 
   const items = NAV_ITEMS.filter((item) => can(item.permission));
-  const primaryPaths = MOBILE_PRIMARY[user.role] || ['/'];
+  const primaryPaths = MOBILE_PRIMARY[user.role] || ['/app'];
   const mobilePrimary = primaryPaths.map((to) => items.find((i) => i.to === to)).filter(Boolean);
   const mobileMore = items.filter((i) => !mobilePrimary.includes(i));
 
@@ -221,7 +224,9 @@ const PERMISSION_LABELS = {
   'orchestrator:query': 'Ask questions', 'simulation:run': 'Run simulations', 'optimizer:run': 'Create dispatch plans',
   'telemetry:read': 'View forecasts', 'rag:search': 'Search regulations', 'rag:ingest': 'Add regulations',
   'audit:read': 'Read the audit trail', 'audit:approve': 'Approve or reject plans', 'analytics:read': 'View analytics',
-  'system:read': 'View system status',
+  'system:read': 'View system status', 'rag:review': 'Review new regulations',
+  'timetable:read': 'View the timetable', 'timetable:manage': 'Upload and edit the timetable',
+  'execution:report': 'Report whether approved plans were carried out',
 };
 
 function UserMenu() {

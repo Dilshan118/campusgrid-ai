@@ -71,6 +71,18 @@ export function tomorrowIso() {
   return parts; // en-CA formats as YYYY-MM-DD
 }
 
+export function todayIso() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+/** Saturday or Sunday on campus for a YYYY-MM-DD date. */
+export function isWeekendIso(isoDate) {
+  const d = toDate(isoDate ? `${isoDate}T12:00:00+05:30` : null);
+  if (!d) return false;
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(d);
+  return day === 'Sat' || day === 'Sun';
+}
+
 export const RECORD_TYPE_LABELS = {
   dispatch_recommendation: 'Dispatch plan',
   approval_decision: 'Decision',
@@ -78,7 +90,17 @@ export const RECORD_TYPE_LABELS = {
   policy_lookup: 'Regulation lookup',
   forecast_review: 'Forecast',
   out_of_scope_query: 'Out of scope',
-  knowledge_ingestion: 'Document upload',
+  knowledge_ingestion: 'Document indexed',
+  knowledge_submission: 'Regulation submitted',
+  knowledge_review: 'Regulation review',
+  timetable_update: 'Timetable change',
+  execution_report: 'Execution report',
+};
+
+export const EXECUTION_OUTCOME_LABELS = {
+  completed: 'Carried out as planned',
+  partial: 'Partly carried out',
+  not_executed: 'Not carried out',
 };
 
 export const INTENT_LABELS = {
@@ -95,4 +117,6 @@ export const ROLE_LABELS = {
   FACILITY_MANAGER: 'Facility Manager',
   OPERATOR: 'Operator',
   ENERGY_AUDITOR: 'Energy Auditor',
+  TIMETABLE_COORDINATOR: 'Timetable Coordinator',
+  WORKS_ENGINEER: 'Works Engineer',
 };

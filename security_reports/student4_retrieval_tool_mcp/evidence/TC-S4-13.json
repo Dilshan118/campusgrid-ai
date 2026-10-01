@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-13",
+  "test_objective": "Verify the tool rejects a simulation horizon far beyond the 48-half-hour-interval design, rather than running unbounded work per call.",
+  "attack_scenario": "MCP tools/call requesting a 100,000-interval simulation instead of the expected 48.",
+  "expected_behaviour": "Reject requests exceeding the pipeline's designed horizon.",
+  "actual_behaviour": "Rejected with isError=True, error='100000 intervals requested, exceeds the 48-interval horizon this pipeline is designed for'",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"100000 intervals requested, exceeds the 48-interval horizon this pipeline is designed for\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H = 6.5 before mitigation. Assessor's contextual rating: Medium (a single call could previously force an arbitrarily long simulation loop \u2014 a compute-exhaustion / DoS vector). Mitigation implemented: MAX_INTERVALS=48 enforced in SimulationTool._validate_bounds().",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

@@ -6,11 +6,13 @@ decision itself, and verification of the tamper-evident hash chain.
 
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, Query
-from src.schemas.requests import AuditApprovalRequest
+from src.schemas.requests import AuditApprovalRequest, ExecutionReportRequest
 from src.schemas.responses import APIResponse
 from src.application.container import Container
 from src.api.dependencies.container import get_app_container
-from src.api.middleware.auth import require_roles, ALL_ROLES, ROLES_APPROVERS, ROLES_ANALYTICS_VIEWERS
+from src.api.middleware.auth import (
+    require_roles, ROLES_PLAN_READERS, ROLES_APPROVERS, ROLES_ANALYTICS_VIEWERS, ROLES_EXECUTORS,
+)
 from src.domain.entities.analytics import AnalyticsEvent, EVENT_DECISION_APPROVED, EVENT_DECISION_REJECTED
 
 router = APIRouter(prefix="/api/audit", tags=["Audit Trail"])
@@ -21,7 +23,7 @@ def list_audit_logs(
     record_type: Optional[str] = Query(default=None, max_length=40),
     status: Optional[str] = Query(default=None, max_length=20),
     include_details: bool = Query(default=False, description="Include the full per-agent outputs"),
-    _user=Depends(require_roles(ALL_ROLES)),
+    _user=Depends(require_roles(ROLES_PLAN_READERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(
@@ -35,7 +37,7 @@ def list_audit_logs(
 def get_audit_log(
     log_id: int,
     include_details: bool = Query(default=True, description="Include the full per-agent outputs"),
-    _user=Depends(require_roles(ALL_ROLES)),
+    _user=Depends(require_roles(ROLES_PLAN_READERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(
@@ -46,7 +48,7 @@ def get_audit_log(
 @router.get("/pending", response_model=APIResponse)
 def list_pending_recommendations(
     limit: int = Query(default=20, ge=1, le=100),
-    _user=Depends(require_roles(ALL_ROLES)),
+    _user=Depends(require_roles(ROLES_PLAN_READERS)),
     container: Container = Depends(get_app_container)
 ):
     return APIResponse(success=True, data=container.audit_service.list_pending(limit=limit))
@@ -76,6 +78,25 @@ def decide_recommendation(
         audit_log_id=request.log_id,
     ))
     return APIResponse(success=True, data=decision)
+
+@router.post("/execution", response_model=APIResponse)
+def report_execution(
+    request: ExecutionReportRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLES_EXECUTORS)),
+    container: Container = Depends(get_app_container)
+):
+    """Record whether an approved plan was carried out on site (Works Division or facility manager).
+
+    Appends an execution_report row to the audit trail; CampusGrid itself still switches nothing.
+    """
+    return APIResponse(success=True, data=container.audit_service.record_execution(
+        log_id=request.log_id,
+        reporter_id=user["user_id"],
+        outcome=request.outcome,
+        executed_on=request.executed_on,
+        notes=request.notes,
+        deviations=request.deviations,
+    ))
 
 @router.get("/verify", response_model=APIResponse)
 def verify_audit_chain(

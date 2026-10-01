@@ -18,10 +18,13 @@ RESPONSIBILITIES:
 5. Enforce the fairness tiers when per-tier load is supplied (tier_guardrails.py):
    Tier 0 is never curtailed, Tier 1 flexes a bounded amount in peak intervals and pays the
    energy back, Tier 2 is shifted and recovered the same day. Optional grid import cap.
-6. Return verified `OptimizationResult` containing schedule, costs, savings, and binding constraints.
-   Costs are per day: energy cost + the daily share (1/30) of the monthly maximum-demand charge,
-   the same quantity the objective minimises.
-7. Price each binding limit: after the MILP solves, the binaries are fixed and the LP is
+6. Demand charge in kVA (kW / power factor). With the billing month's peak so far, the day pays
+   the full monthly rate only on demand above it; without it, 1/30 of the monthly charge is
+   attributed to the day's peak.
+7. Return verified `OptimizationResult` containing schedule, costs, savings, and binding constraints,
+   after an independent arithmetic check of the solution (post_solve.check_solution).
+   Costs are per day and are the same quantity the objective minimises.
+8. Price each binding limit: after the MILP solves, the binaries are fixed and the LP is
    re-solved to read shadow prices — "one more kW of discharge rating would save LKR X per day".
 """
 
@@ -32,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 import pulp
 
+from src.agents.dispatch_explanation.post_solve import check_solution
 from src.agents.dispatch_explanation.tier_guardrails import TierLoads, TierPolicy
 from src.domain.entities.optimization import OptimizationInput, OptimizationResult, BindingConstraint
 from src.domain.exceptions.base import DomainException, InfeasibleOptimizationError
@@ -52,6 +56,27 @@ class DispatchSolution:
     """The solver's full answer: the contract result plus the fairness-tier report."""
     result: OptimizationResult
     tier_report: Optional[Dict[str, Any]] = None
+
+
+def _tier1_caps(opt_input: OptimizationInput, policy: TierPolicy) -> List[float]:
+    """Per-interval kW that Tier 1 may move: the tighter of the degree-based cap (kW per degree
+    times the allowed setback) and the planner's fraction of Tier 1 load. 0 when neither is set."""
+    tier1 = opt_input.tier1_load_kw
+    degree_cap = policy.tier1_kw_per_degree_c * policy.tier1_max_flex_c if policy.tier1_kw_per_degree_c else None
+    ratio = opt_input.tier1_max_reduction_ratio
+    caps = []
+    for load in tier1:
+        options = [c for c in (degree_cap, ratio * load if ratio > 0 else None) if c is not None]
+        caps.append(min(options) if options else 0.0)
+    return caps
+
+
+def _tier2_ceiling(opt_input: OptimizationInput, policy: TierPolicy) -> float:
+    """Highest kW a Tier 2 interval may run at once its load is shifted: the equipment's rated
+    power when known, otherwise the policy's multiple of the profile's own peak."""
+    if opt_input.tier2_max_kw is not None:
+        return opt_input.tier2_max_kw
+    return policy.tier2_max_rebound_ratio * max(opt_input.tier2_load_kw, default=0.0)
 
 
 def _invalid(message: str, **details) -> DomainException:
@@ -179,24 +204,26 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
         if tiers_on:
             tier1 = opt_input.tier1_load_kw
             tier2 = opt_input.tier2_load_kw
-            # Tier 1 may only flex in the highest-tariff intervals (the peak window), and only if
-            # the digital twin's kW-per-degree figure is known.
+            # Tier 1 may only flex in the highest-tariff intervals (the peak window), by at most the
+            # tighter of two caps: the digital twin's kW-per-degree figure times the allowed setback,
+            # and the planner's fraction of Tier 1 load (tier1_max_reduction_ratio). Neither -> no flex.
             if max(tariffs) > min(tariffs):
                 peak_slots = [t for t in range(T) if tariffs[t] >= max(tariffs) - 1e-9]
-            if policy.tier1_kw_per_degree_c:
-                tier1_cap_kw = policy.tier1_kw_per_degree_c * policy.tier1_max_flex_c
+            tier1_caps = _tier1_caps(opt_input, policy)
+            tier1_cap_kw = max(tier1_caps, default=0.0)
             t1_red = [
                 pulp.LpVariable(f"tier1_reduce_{t}", lowBound=0.0,
-                                upBound=min(tier1_cap_kw, tier1[t]) if t in peak_slots else 0.0)
+                                upBound=min(tier1_caps[t], tier1[t]) if t in peak_slots else 0.0)
                 for t in range(T)
             ]
             t1_pay = [
                 pulp.LpVariable(f"tier1_payback_{t}", lowBound=0.0,
-                                upBound=0.0 if t in peak_slots else tier1_cap_kw)
+                                upBound=0.0 if t in peak_slots else tier1_caps[t])
                 for t in range(T)
             ]
-            # Tier 2: shift down (curtail) and up (recover), capped at a multiple of its peak.
-            tier2_ceiling = policy.tier2_max_rebound_ratio * max(tier2)
+            # Tier 2: shift down (curtail) and up (recover), up to the equipment's rated power when
+            # known, otherwise a multiple of its own peak.
+            tier2_ceiling = _tier2_ceiling(opt_input, policy)
             t2_down = [pulp.LpVariable(f"tier2_shift_down_{t}", lowBound=0.0, upBound=tier2[t]) for t in range(T)]
             t2_up = [pulp.LpVariable(f"tier2_shift_up_{t}", lowBound=0.0, upBound=max(0.0, tier2_ceiling - tier2[t]))
                      for t in range(T)]
@@ -222,9 +249,27 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
                 for t in range(T)
             )
 
-        # --- Objective: energy import cost + peak demand surcharge (+ small flexibility costs) ---
+        # --- Objective: energy import cost + demand charge (+ small flexibility costs) ---
+        # Demand is billed in kVA = kW / power factor.
+        pf = opt_input.power_factor
+        rate = opt_input.peak_demand_penalty_lkr_kva
+        mtd_kva = opt_input.month_to_date_peak_kva
         energy_cost = pulp.lpSum(grid_kw[t] * tariffs[t] * dt for t in range(T))
-        peak_surcharge = peak_grid * (opt_input.peak_demand_penalty_lkr_kva / 30.0)
+        if mtd_kva is None:
+            demand_basis = (
+                f"1/30 of the monthly LKR {rate:g}/kVA charge on the day's peak"
+                + (f" at power factor {pf:g}" if pf < 1 else " (kW treated as kVA)")
+            )
+            peak_surcharge = peak_grid * (1.0 / pf) * (rate / 30.0)
+        else:
+            # Only demand above the month's peak so far raises this month's bill, at the full rate.
+            demand_basis = (
+                f"full monthly LKR {rate:g}/kVA charge on demand above the month-to-date peak of "
+                f"{mtd_kva:g} kVA (power factor {pf:g})"
+            )
+            excess_kva = pulp.LpVariable("excess_kva", lowBound=0.0)
+            prob += excess_kva >= peak_grid * (1.0 / pf) - mtd_kva, "Demand_Above_Month_Peak"
+            peak_surcharge = excess_kva * rate
         prob += energy_cost + peak_surcharge + flex_penalty
 
         for t in range(T):
@@ -273,6 +318,7 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
                                      "battery together cannot serve it with the flexibility allowed.")
             if opt_input.max_grid_import_kw is not None:
                 details["max_grid_import_kw"] = opt_input.max_grid_import_kw
+                details["hint"] = "Demand above the grid import limit that the battery cannot cover makes the day infeasible."
             raise InfeasibleOptimizationError(
                 message=f"MILP solver terminated with non-optimal status: {solver_status}",
                 details=details,
@@ -293,23 +339,52 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
         peak_base = max(max(0.0, opt_input.base_load_kw[t] - opt_input.solar_gen_kw[t]) for t in range(T))
         peak_opt = max(res_grid)
 
-        # Same cost the objective minimises: energy + daily share of the monthly demand charge
-        # (kW treated as kVA, i.e. unity power factor). Negative savings are reported, not hidden.
+        # Same cost the objective minimises. Negative savings are reported, not hidden.
         # The small flexibility costs steer the solver but are not part of the bill.
-        daily_demand_rate = opt_input.peak_demand_penalty_lkr_kva / 30.0
-        baseline_cost = baseline_energy_cost + peak_base * daily_demand_rate
-        opt_cost = opt_energy_cost + peak_opt * daily_demand_rate
+        def demand_charge(peak_kw: float) -> float:
+            kva = peak_kw / pf
+            return rate * max(0.0, kva - mtd_kva) if mtd_kva is not None else kva * rate / 30.0
+
+        baseline_cost = baseline_energy_cost + demand_charge(peak_base)
+        opt_cost = opt_energy_cost + demand_charge(peak_opt)
         energy_savings = baseline_energy_cost - opt_energy_cost
-        demand_savings = (peak_base - peak_opt) * daily_demand_rate
+        demand_savings = demand_charge(peak_base) - demand_charge(peak_opt)
         net_savings = baseline_cost - opt_cost
         savings_pct = (net_savings / baseline_cost * 100.0) if baseline_cost > 0 else 0.0
 
         # Read the tier schedule before the shadow-price re-solve, which may pick a different
         # schedule of equal cost.
         tier_report = None
+        tier_bounds = None
+        served = {"tier0": None, "tier1": None, "tier2": None}
         if tiers_on:
             tier_report = self._tier_report(
                 opt_input, policy, tier_source, peak_slots, tier1_cap_kw, t1_red, t1_pay, t2_down, t2_up,
+            )
+            tier1, tier2 = opt_input.tier1_load_kw, opt_input.tier2_load_kw
+            served = {
+                "tier0": [round(v, 2) for v in opt_input.tier0_load_kw],
+                "tier1": [round(tier1[t] + tier_report["tier1"]["schedule_kw"][t], 2) for t in range(T)],
+                "tier2": [round(tier2[t] + tier_report["tier2"]["schedule_kw"][t], 2) for t in range(T)],
+            }
+            tier_bounds = {
+                "tier1_low": [tier1[t] - (min(tier1_caps[t], tier1[t]) if t in peak_slots else 0.0) for t in range(T)],
+                "tier1_high": [tier1[t] + (0.0 if t in peak_slots else tier1_caps[t]) for t in range(T)],
+                "tier2_high": [max(tier2_ceiling, tier2[t]) for t in range(T)],
+            }
+
+        checks = check_solution(
+            opt_input,
+            [opt_input.tier0_load_kw, opt_input.tier1_load_kw, opt_input.tier2_load_kw] if tiers_on else None,
+            res_grid, res_charge, res_discharge, res_soc, served["tier1"], served["tier2"], eta, dt,
+            tier_bounds=tier_bounds,
+        )
+        if not checks["passed"]:
+            # Fail closed: a schedule that breaks its own constraints is never shown to a reviewer.
+            raise DomainException(
+                message="The solved schedule failed the post-solve constraint check: " + "; ".join(checks["failures"]),
+                error_code="POST_SOLVE_CHECK_FAILED",
+                details=checks,
             )
 
         shadow = self._shadow_prices(prob, is_charging, charging_mode)
@@ -336,6 +411,11 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
             solver_status=solver_status,
             solve_time_ms=solve_duration_ms,
             binding_constraints=binding,
+            served_tier0_kw=served["tier0"],
+            served_tier1_kw=served["tier1"],
+            served_tier2_kw=served["tier2"],
+            demand_charge_basis=demand_basis,
+            post_solve_checks=checks,
         )
         return DispatchSolution(result=result, tier_report=tier_report)
 
@@ -463,6 +543,7 @@ class CampusMicrogridOptimizer(MicrogridOptimizerInterface):
                 "flex_enabled": tier1_cap_kw > 0 and bool(peak_slots),
                 "max_flex_c": policy.tier1_max_flex_c,
                 "kw_per_degree_c": policy.tier1_kw_per_degree_c,
+                "max_reduction_ratio": opt_input.tier1_max_reduction_ratio or None,
                 "max_reduction_kw": round(max(red), 2) if red else 0.0,
                 "reduced_kwh": round(sum(red) * dt, 2),
                 "recovered_kwh": round(sum(pay) * dt, 2),

@@ -24,10 +24,28 @@ CREATE TABLE IF NOT EXISTS timetables (
 -- Seed inventory, identical to the in-memory repositories. Without rooms, Postgres mode knows no
 -- room capacity, so a campus-wide headcount could be simulated inside a single lecture hall.
 -- Safe to re-run: existing rows are left alone.
+-- room_type must match a venue type in src/agents/digital_twin/room_presets.py.
 INSERT INTO rooms (room_id, building_name, room_type, max_capacity, chiller_zone_id) VALUES
     ('LH-1', 'Main Academic Complex', 'Lecture Hall', 250, 'ZONE-A1'),
+    ('LH-2', 'Main Academic Complex', 'Lecture Hall', 150, 'ZONE-A1'),
+    ('LH-3', 'Main Academic Complex', 'Lecture Hall', 100, 'ZONE-A2'),
+    ('LH-4', 'New Academic Building', 'Lecture Hall', 200, 'ZONE-D1'),
+    ('LH-5', 'New Academic Building', 'Lecture Hall', 60, 'ZONE-D1'),
+    ('LAB-1', 'Computing Building', 'Computer Lab', 40, 'ZONE-C1'),
+    ('LAB-2', 'Computing Building', 'Computer Lab', 60, 'ZONE-C1'),
+    ('LAB-3', 'Computing Building', 'Computer Lab', 80, 'ZONE-C2'),
+    ('SLAB-1', 'Science Block', 'Science Lab', 25, 'ZONE-S1'),
+    ('SLAB-2', 'Science Block', 'Science Lab', 35, 'ZONE-S1'),
+    ('SLAB-3', 'Engineering Building', 'Science Lab', 30, 'ZONE-E1'),
     ('AUD-1', 'Auditorium Wing', 'Auditorium', 600, 'ZONE-B1'),
-    ('LAB-3', 'Computing Building', 'Computer Lab', 80, 'ZONE-C2')
+    ('AUD-2', 'Business School', 'Auditorium', 300, 'ZONE-B2'),
+    ('STDY-1', 'Library', 'Study Area', 150, 'ZONE-L1'),
+    ('STDY-2', 'Library', 'Study Area', 60, 'ZONE-L1'),
+    ('STDY-3', 'Student Centre', 'Study Area', 80, 'ZONE-T1'),
+    ('DRW-1', 'Architecture Building', 'Drawing Room', 40, 'ZONE-R1'),
+    ('DRW-2', 'Engineering Building', 'Drawing Room', 60, 'ZONE-E2'),
+    ('SEM-1', 'Main Academic Complex', 'Seminar Room', 30, 'ZONE-A2'),
+    ('SEM-2', 'Business School', 'Seminar Room', 20, 'ZONE-B2')
 ON CONFLICT (room_id) DO NOTHING;
 
 -- day_of_week: 1 = Monday ... 7 = Sunday (ISO weekday, as Agent 1 derives it from the date).
@@ -110,6 +128,14 @@ ALTER TABLE audit_log_store ADD COLUMN IF NOT EXISTS previous_signature VARCHAR(
 -- At most one approve/reject decision per recommendation.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_decision_per_recommendation
     ON audit_log_store (parent_log_id) WHERE record_type = 'approval_decision';
+
+-- At most one Works Division execution report per approved plan.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_execution_per_recommendation
+    ON audit_log_store (parent_log_id) WHERE record_type = 'execution_report';
+
+-- At most one review of each quarantined regulation submission.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_one_review_per_submission
+    ON audit_log_store (parent_log_id) WHERE record_type = 'knowledge_review';
 
 -- Append-only enforcement at the database level, not just in application code.
 CREATE OR REPLACE FUNCTION audit_log_store_block_mutation() RETURNS trigger AS $$

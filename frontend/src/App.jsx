@@ -21,6 +21,7 @@ const AuditPage = lazy(() => import('./pages/AuditPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 const SystemStatusPage = lazy(() => import('./pages/SystemStatusPage'));
 const PUBLIC_ROUTES = new Set(['/', '/product', '/solutions', '/how-it-works', '/commercial-plans', '/responsible-ai', '/contact']);
+const TimetablePage = lazy(() => import('./pages/TimetablePage'));
 
 // Order matters: '/plans/new' must be matched before '/plans/:id'.
 const ROUTES = [
@@ -31,6 +32,7 @@ const ROUTES = [
   { pattern: '/plans/:id', page: PlanReviewPage, permission: 'audit:read', title: 'Plan review' },
   { pattern: '/what-if', page: WhatIfPage, permission: 'simulation:run', title: 'What-if simulator' },
   { pattern: '/forecast', page: ForecastPage, permission: 'telemetry:read', title: 'Forecast' },
+  { pattern: '/timetable', page: TimetablePage, permission: 'timetable:read', title: 'Timetable' },
   { pattern: '/regulations', page: RegulationsSearchPage, permission: 'rag:search', title: 'Regulation search' },
   { pattern: '/regulations/library', page: LibraryPage, permission: 'rag:search', title: 'Regulation library' },
   { pattern: '/audit', page: AuditPage, permission: 'audit:read', title: 'Audit & Compliance' },

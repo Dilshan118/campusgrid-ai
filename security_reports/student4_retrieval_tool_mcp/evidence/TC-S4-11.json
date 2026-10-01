@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-11",
+  "test_objective": "Verify a NaN value smuggled in over the JSON wire format cannot bypass numeric bounds checking.",
+  "attack_scenario": "Python's json.loads accepts the non-standard literal NaN by default, parsing it to float('nan'). A naive bounds check written as `if x < MIN or x > MAX: raise` would NOT catch NaN, because every comparison against NaN is False \u2014 this attack specifically probes for that mistake.",
+  "expected_behaviour": "NaN must be rejected, not silently pass through as an 'in range' value.",
+  "actual_behaviour": "Rejected with isError=True, error='initial_temp_c=nan outside physical envelope [10.0, 45.0]'. Confirmed the chained comparison `MIN <= x <= MAX` used in _validate_bounds() correctly evaluates to False for NaN (unlike separate < / > checks would).",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 11, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"initial_temp_c=nan outside physical envelope [10.0, 45.0]\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:L = 5.4 before mitigation. Assessor's contextual rating: High if the naive pattern had been used \u2014 NaN would propagate through the physics undetected. Mitigation implemented and verified: chained-comparison bounds checks in SimulationTool._validate_bounds().",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

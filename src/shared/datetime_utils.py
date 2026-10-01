@@ -3,7 +3,18 @@ CampusGrid AI: Datetime & Interval Utilities
 Helpers for working with 48 half-hour microgrid time slots.
 """
 
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+
+# Sri Lanka has no daylight saving, so a fixed offset is exact and needs no tz database
+# (Windows installs without the tzdata package cannot resolve "Asia/Colombo").
+CAMPUS_TZ = timezone(timedelta(hours=5, minutes=30), name="Asia/Colombo")
+
+
+def campus_today() -> date:
+    """Today's date on campus, independent of the server's own timezone."""
+    return datetime.now(CAMPUS_TZ).date()
+
 
 def get_standard_48_time_slots() -> List[str]:
     """Returns the standard 48 half-hour slots from '00:00' to '23:30'."""

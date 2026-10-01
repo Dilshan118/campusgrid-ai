@@ -14,6 +14,7 @@ from src.api.routes.auth import router as auth_router
 from src.api.routes.campus import router as campus_router
 from src.api.routes.mcp import router as mcp_router
 from src.api.routes.contact import router as contact_router
+from src.api.routes.timetable import router as timetable_router
 
 __all__ = [
     "health_router",
@@ -28,5 +29,6 @@ __all__ = [
     "campus_router",
     "mcp_router",
     "contact_router",
+    "timetable_router",
 ]
 

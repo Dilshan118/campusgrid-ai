@@ -32,6 +32,7 @@ from src.api.routes import (
     campus_router,
     mcp_router,
     contact_router,
+    timetable_router,
 )
 
 settings = get_settings()
@@ -66,7 +67,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Trace-ID"],
     expose_headers=["X-Request-ID", "X-Trace-ID", "X-Process-Time-Ms", "X-Privacy-Mechanism"],
 )
@@ -84,4 +85,5 @@ app.include_router(audit_router)
 app.include_router(campus_router)
 app.include_router(mcp_router)
 app.include_router(contact_router)
+app.include_router(timetable_router)
 

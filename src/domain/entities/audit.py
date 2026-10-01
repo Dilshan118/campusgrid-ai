@@ -25,6 +25,18 @@ RECORD_FORECAST_REVIEW = "forecast_review"
 RECORD_OUT_OF_SCOPE = "out_of_scope_query"
 RECORD_KNOWLEDGE_INGESTION = "knowledge_ingestion"
 RECORD_APPROVAL_DECISION = "approval_decision"
+RECORD_TIMETABLE_UPDATE = "timetable_update"
+# A regulation document waiting in quarantine, and a second person's review of it.
+RECORD_KNOWLEDGE_SUBMISSION = "knowledge_submission"
+RECORD_KNOWLEDGE_REVIEW = "knowledge_review"
+# Appended by the Works Division after an approved plan was (or was not) carried out on site.
+RECORD_EXECUTION_REPORT = "execution_report"
+
+# Outcomes an execution report may record.
+EXECUTION_COMPLETED = "completed"
+EXECUTION_PARTIAL = "partial"
+EXECUTION_NOT_EXECUTED = "not_executed"
+EXECUTION_OUTCOMES = (EXECUTION_COMPLETED, EXECUTION_PARTIAL, EXECUTION_NOT_EXECUTED)
 
 # Where the row stands in the human approval workflow.
 APPROVAL_PENDING = "pending"

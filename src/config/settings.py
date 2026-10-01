@@ -96,6 +96,18 @@ class PhysicsSettings(BaseModel):
     building_r_out: float = 6.0      # Wall <-> outdoor air resistance (°C / kW)
     hvac_max_cooling_kw: float = 35.0  # Rated cooling of one zone's chiller share (kW thermal)
 
+class LoadFlexibilitySettings(BaseModel):
+    """How the campus demand forecast is split into load tiers for the optimizer.
+
+    There is no sub-metering, so the split is an assumption stated on every plan: the
+    air-conditioning share of campus demand (Tier 1), how far each half-hour of it may move
+    (energy-neutral pre-cooling; 0 disables HVAC flexibility), and the site power factor.
+    Tier 2 (shiftable pumps / EV chargers) is entered per plan on the dispatch form."""
+    hvac_load_share: float = Field(default=0.40, ge=0.0, le=0.9)
+    hvac_flex_ratio: float = Field(default=0.10, ge=0.0, le=0.5)
+    power_factor: float = Field(default=1.0, gt=0.5, le=1.0)
+    max_grid_import_kw: Optional[float] = Field(default=None, gt=0)
+
 class WeatherSettings(BaseModel):
     provider: str = "open-meteo"
     openweather_api_key: Optional[str] = None
@@ -182,6 +194,17 @@ class Settings(BaseSettings):
     building_r_in: float = 2.0
     building_r_out: float = 6.0
     hvac_max_cooling_kw: float = 35.0
+    campus_hvac_load_share: float = 0.40
+    hvac_flex_ratio: float = 0.10
+    site_power_factor: float = 1.0
+    max_grid_import_kw: Optional[float] = None
+    regulation_review_required: bool = Field(
+        default=True,
+        description=(
+            "New regulation text must go through POST /api/rag/submissions and a second reviewer before it is "
+            "indexed. False re-enables immediate indexing through POST /api/rag/ingest (tests, local corpus work)."
+        ),
+    )
     use_reference_baselines: bool = Field(
         default=False,
         description="When True, container falls back to reference baseline algorithms for agents 1, 2, 4"
@@ -333,6 +356,15 @@ class Settings(BaseSettings):
             building_r_in=self.building_r_in,
             building_r_out=self.building_r_out,
             hvac_max_cooling_kw=self.hvac_max_cooling_kw,
+        )
+
+    @property
+    def load_flexibility(self) -> LoadFlexibilitySettings:
+        return LoadFlexibilitySettings(
+            hvac_load_share=self.campus_hvac_load_share,
+            hvac_flex_ratio=self.hvac_flex_ratio,
+            power_factor=self.site_power_factor,
+            max_grid_import_kw=self.max_grid_import_kw,
         )
 
     @property

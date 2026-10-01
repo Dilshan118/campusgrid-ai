@@ -7,15 +7,19 @@ Enables offline development, testing, and zero-dependency deployments.
 import math
 import threading
 from typing import List, Dict, Any, Optional
-from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult
+from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult, validate_vector
 from src.domain.entities.rag import DocumentClause
 
 class MemoryVectorStore(VectorStore):
-    """In-memory cosine similarity vector database."""
+    """In-memory cosine similarity vector database.
 
-    def __init__(self):
+    The store's dimension is fixed by `dimension`, or else by the first embedding added; every
+    later embedding and query vector must match it."""
+
+    def __init__(self, dimension: Optional[int] = None):
         self._documents: Dict[str, DocumentClause] = {}
         self._counter = 1
+        self._dimension = dimension
         self._lock = threading.Lock()  # shared by concurrent request threads
 
     def _cosine_similarity(self, vec_a: List[float], vec_b: List[float]) -> float:
@@ -32,6 +36,9 @@ class MemoryVectorStore(VectorStore):
         ids = []
         with self._lock:
             for doc in documents:
+                if doc.embedding:
+                    validate_vector(doc.embedding, self._dimension, "memory")
+                    self._dimension = self._dimension or len(doc.embedding)
                 if doc.id is None:
                     doc.id = self._counter
                     self._counter += 1
@@ -48,6 +55,7 @@ class MemoryVectorStore(VectorStore):
     ) -> List[VectorSearchResult]:
         results = []
         with self._lock:
+            query_vector = validate_vector(query_vector, self._dimension, "memory")
             snapshot = list(self._documents.values())  # never iterate the live dict while another thread adds
         for doc in snapshot:
             if not doc.embedding:

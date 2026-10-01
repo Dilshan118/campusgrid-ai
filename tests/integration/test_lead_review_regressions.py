@@ -476,13 +476,47 @@ def test_privacy_export_is_fixed_per_date(test_container):
 
 # --- B10: training pipeline --------------------------------------------------------------------
 
-def test_trainer_never_writes_a_pickle_into_the_json_model(tmp_path):
-    pytest.importorskip("joblib")
+def _linear_model():
+    from src.agents.telemetry.model_utils import LinearForecastModel
+    return LinearForecastModel(weights=[0.0, 0.0, 0.0, 0.0], bias=400.0, means=[0.0] * 4, stds=[1.0] * 4)
+
+
+def _metrics(promoted, version):
+    return {"promoted": promoted, "model_version": version, "feature_ranges": {}}
+
+
+def test_trainer_only_ever_writes_the_served_model_type(tmp_path):
+    """Training and serving use one model type: the artifact is always the JSON linear model."""
+    import json
     from src.pipelines.periodic_retraining.train_forecaster import ModelTrainer
     target = tmp_path / "model_forecaster.json"
-    ModelTrainer._save_artifact({"not": "a linear model"}, "lightgbm", {"feature_ranges": {}}, str(target))
-    assert not target.exists()
-    assert (tmp_path / "model_forecaster.lightgbm.joblib").exists()
+    ModelTrainer._save_artifact(_linear_model(), _metrics(True, "linear-1"), str(target))
+    payload = json.loads(target.read_text())
+    assert payload["model_type"] == "linear_regression" and payload["model_version"] == "linear-1"
+    assert not list(tmp_path.glob("*.joblib"))
+
+
+def test_trainer_keeps_unpromoted_models_out_of_service_and_can_roll_back(tmp_path):
+    import json
+    from src.pipelines.periodic_retraining.train_forecaster import ModelTrainer, rollback
+    target = tmp_path / "model_forecaster.json"
+    ModelTrainer._save_artifact(_linear_model(), _metrics(True, "linear-1"), str(target))
+    ModelTrainer._save_artifact(_linear_model(), _metrics(False, "linear-2"), str(target))
+    assert json.loads(target.read_text())["model_version"] == "linear-1"
+    assert json.loads((tmp_path / "model_forecaster.candidate.json").read_text())["model_version"] == "linear-2"
+
+    ModelTrainer._save_artifact(_linear_model(), _metrics(True, "linear-3"), str(target))
+    assert json.loads(target.read_text())["model_version"] == "linear-3"
+    rollback(str(target))
+    assert json.loads(target.read_text())["model_version"] == "linear-1"
+
+
+def test_forecaster_ignores_an_artifact_with_another_feature_schema(tmp_path):
+    import json
+    from src.agents.telemetry.forecaster import DemandForecaster
+    path = tmp_path / "model.json"
+    path.write_text(json.dumps({**_linear_model().to_dict(), "feature_names": ["hour", "temp"]}))
+    assert DemandForecaster(model_path=str(path))._model_artifact is None
 
 
 def test_trainer_baseline_is_the_reference_persistence_forecast():

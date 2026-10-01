@@ -71,6 +71,7 @@ export const api = {
   ask: (payload, signal) => request('POST', '/api/orchestrator/query', { body: payload, signal }),
   dispatch: (payload) => request('POST', '/api/optimizer/dispatch', { body: payload }),
   whatIf: (payload) => request('POST', '/api/simulation/what-if', { body: payload }),
+  venues: () => request('GET', '/api/simulation/venues'),
   forecast: (date, room) => request('GET', '/api/telemetry/forecast', { query: { date, room } }),
   historical: (date) => request('GET', '/api/telemetry/historical', { query: { date } }),
   rooms: () => request('GET', '/api/campus/rooms'),
@@ -80,6 +81,17 @@ export const api = {
     request('POST', '/api/rag/search', { body: { query, top_k: topK, session_id: sessionId } }),
   regulationLibrary: () => request('GET', '/api/rag/documents'),
   ingestRegulation: (payload) => request('POST', '/api/rag/ingest', { body: payload, raw: true }),
+  regulationSources: () => request('GET', '/api/rag/sources'),
+  regulationSubmissions: (status) => request('GET', '/api/rag/submissions', { query: { status } }),
+  regulationSubmission: (id) => request('GET', `/api/rag/submissions/${encodeURIComponent(id)}`),
+  submitRegulation: (payload) => request('POST', '/api/rag/submissions', { body: payload }),
+  reviewRegulation: (id, payload) => request('POST', `/api/rag/submissions/${encodeURIComponent(id)}/review`, { body: payload }),
+
+  // Timetable
+  timetable: (day) => request('GET', '/api/timetable', { query: { day } }),
+  uploadTimetable: (payload) => request('POST', '/api/timetable/upload', { body: payload }),
+  addTimetableSession: (payload) => request('POST', '/api/timetable/sessions', { body: payload }),
+  deleteTimetableSession: (id) => request('DELETE', `/api/timetable/sessions/${encodeURIComponent(id)}`),
 
   // Audit & approvals
   auditLogs: (params) => request('GET', '/api/audit/logs', { query: params }),
@@ -88,6 +100,7 @@ export const api = {
     request('GET', `/api/audit/logs/${encodeURIComponent(id)}`, { query: { include_details: includeDetails } }),
   pending: (limit = 100) => request('GET', '/api/audit/pending', { query: { limit } }),
   decide: (payload) => request('POST', '/api/audit/approve', { body: payload }),
+  reportExecution: (payload) => request('POST', '/api/audit/execution', { body: payload }),
   verifyAudit: () => request('GET', '/api/audit/verify'),
 
   // Analytics

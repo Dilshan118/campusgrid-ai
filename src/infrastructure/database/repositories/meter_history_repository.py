@@ -80,6 +80,9 @@ class InMemoryMeterHistoryRepository(MeterHistoryRepository):
     def get_historical_profile(self, date_str: str) -> List[TelemetryInterval]:
         return list(self._records)
 
+    def get_historical_profile_with_source(self, date_str: str):
+        return self.get_historical_profile(date_str), "seed_profile"
+
     def append_reading(self, reading: TelemetryInterval) -> bool:
         self._records.append(reading)
         return True
@@ -102,6 +105,9 @@ class PostgresMeterHistoryRepository(MeterHistoryRepository):
         self._fallback = fallback or InMemoryMeterHistoryRepository()
 
     def get_historical_profile(self, date_str: str) -> List[TelemetryInterval]:
+        return self.get_historical_profile_with_source(date_str)[0]
+
+    def get_historical_profile_with_source(self, date_str: str):
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
@@ -114,7 +120,7 @@ class PostgresMeterHistoryRepository(MeterHistoryRepository):
             ).fetchall()
 
         if not rows:
-            return self._fallback.get_historical_profile(date_str)
+            return self._fallback.get_historical_profile(date_str), "seed_profile"
 
         return [
             TelemetryInterval(
@@ -126,7 +132,7 @@ class PostgresMeterHistoryRepository(MeterHistoryRepository):
                 zone_occupancy_count=r[5],
             )
             for r in rows
-        ]
+        ], "meter_history"
 
     def append_reading(self, reading: TelemetryInterval, reading_date: Optional[str] = None) -> bool:
         import datetime

@@ -16,6 +16,8 @@ from src.api.middleware.auth import (
     ROLE_FACILITY_MANAGER,
     ROLE_OPERATOR,
     ROLE_AUDITOR,
+    ROLE_TIMETABLE_COORDINATOR,
+    ROLE_WORKS_ENGINEER,
     AuthenticationError,
 )
 from src.config.settings import get_settings
@@ -42,6 +44,16 @@ DEMO_USERS = {
         "role": ROLE_AUDITOR,
         "full_name": "PUCSL Compliance Auditor",
     },
+    "timetable": {
+        "password_hash": "pbkdf2_sha256$120000$1c7ddadcffc9ed38e1af5deae173cad8$5a1e721c2b9e88b1eb242fd1815d776e740fd2d4a4d5b19d9d5c8e319f4ed238",
+        "role": ROLE_TIMETABLE_COORDINATOR,
+        "full_name": "Assistant Registrar (Academic)",
+    },
+    "works": {
+        "password_hash": "pbkdf2_sha256$120000$7ef47d7e86275cfdf772546a9b904c46$72e6f0742bf8df5f28a6b32aa8d93014c3f81872dbc0ef03ea9add3707873b1d",
+        "role": ROLE_WORKS_ENGINEER,
+        "full_name": "Works Engineer (Maintenance Division)",
+    },
 }
 
 # What each role may do, so the dashboard can hide actions instead of letting users hit 403s.
@@ -50,19 +62,31 @@ ROLE_PERMISSIONS = {
         "description": "Full access: plans, simulations, dispatch approval, knowledge base management, analytics and audit.",
         "permissions": [
             "orchestrator:query", "simulation:run", "optimizer:run", "telemetry:read",
-            "rag:search", "rag:ingest", "audit:read", "audit:approve", "analytics:read", "system:read",
+            "rag:search", "rag:ingest", "rag:review", "audit:read", "audit:approve", "analytics:read", "system:read",
+            "timetable:read", "timetable:manage", "execution:report",
         ],
     },
     ROLE_OPERATOR: {
         "description": "Day-to-day operation: queries, simulations and dispatch plans. Cannot approve plans.",
         "permissions": [
             "orchestrator:query", "simulation:run", "optimizer:run", "telemetry:read",
-            "rag:search", "audit:read",
+            "rag:search", "audit:read", "timetable:read",
         ],
     },
     ROLE_AUDITOR: {
-        "description": "Read-only compliance access to the audit trail, regulations and analytics.",
-        "permissions": ["rag:search", "audit:read", "analytics:read"],
+        "description": "Read-only compliance access to the audit trail, regulations, timetable and analytics. "
+                       "Second reviewer for new regulation documents.",
+        "permissions": ["rag:search", "rag:review", "audit:read", "analytics:read", "timetable:read"],
+    },
+    ROLE_TIMETABLE_COORDINATOR: {
+        "description": "Faculty timetable office: uploads and maintains the semester teaching timetable that "
+                       "drives expected room occupancy. No access to plans or approvals.",
+        "permissions": ["timetable:read", "timetable:manage"],
+    },
+    ROLE_WORKS_ENGINEER: {
+        "description": "Works / Maintenance Division: reads approved plans and forecasts, carries the schedule "
+                       "out on site, and records whether it was executed. Cannot create or approve plans.",
+        "permissions": ["telemetry:read", "rag:search", "audit:read", "timetable:read", "execution:report"],
     },
 }
 

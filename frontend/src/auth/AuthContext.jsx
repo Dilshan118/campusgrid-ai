@@ -8,7 +8,9 @@ import { setAnalyticsUser } from '../lib/analytics';
 const SESSION_KEY = 'cg-session';
 const WARN_BEFORE_MS = 5 * 60_000;
 
-export const HOME_BY_ROLE = { FACILITY_MANAGER: '/app', OPERATOR: '/ask', ENERGY_AUDITOR: '/audit' };
+export const HOME_BY_ROLE = {
+  FACILITY_MANAGER: '/app', OPERATOR: '/ask', ENERGY_AUDITOR: '/audit', TIMETABLE_COORDINATOR: '/timetable', WORKS_ENGINEER: '/plans',
+};
 
 const AuthContext = createContext(null);
 

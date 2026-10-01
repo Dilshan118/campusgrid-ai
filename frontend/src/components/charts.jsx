@@ -378,17 +378,26 @@ export function BatteryLevelChart({ slots = [], soc = [], limits = {}, height = 
 // Indoor temperature vs the comfort band
 // ---------------------------------------------------------------------------
 
+const OCCUPIED_FILL = 'rgb(var(--accent))';
+
 function ViolationDot({ cx, cy, payload, band }) {
   if (cx === undefined || cy === undefined) return null;
-  const outside = payload.indoor < band[0] || payload.indoor > band[1];
+  const outside = payload.assessed && (payload.indoor < band[0] || payload.indoor > band[1]);
   if (!outside) return null;
   return <circle cx={cx} cy={cy} r={4} fill={CRITICAL} stroke={SURFACE} strokeWidth={2} />;
 }
 
-export function TemperatureChart({ slots = [], indoor = [], outdoor = [], band = [21, 25.5], height = 280 }) {
+/**
+ * `occupied` (one boolean per slot) limits the comfort check to the hours the room is in use —
+ * an empty room drifting warm overnight is not a violation — and `occupiedWindow` ({start, end})
+ * shades those hours. Without them every slot is assessed, as before.
+ */
+export function TemperatureChart({ slots = [], indoor = [], outdoor = [], band = [21, 25.5], height = 280, occupied, occupiedWindow }) {
   const narrow = useNarrow();
-  const data = slots.map((slot, i) => ({ slot, indoor: indoor[i], outdoor: outdoor[i] }));
-  const violations = indoor.filter((t) => t < band[0] || t > band[1]).length;
+  const data = slots.map((slot, i) => ({ slot, indoor: indoor[i], outdoor: outdoor[i], assessed: !occupied || !!occupied[i] }));
+  const outsideBand = (row) => row.assessed && (row.indoor < band[0] || row.indoor > band[1]);
+  const violations = data.filter(outsideBand).length;
+  const assessedCount = data.filter((row) => row.assessed).length;
   // A dot per violation helps when there are a few; past that the band itself shows it and dots become noise.
   const markViolations = violations > 0 && violations <= 12;
   const values = [...indoor, ...outdoor].filter((v) => typeof v === 'number');
@@ -398,20 +407,24 @@ export function TemperatureChart({ slots = [], indoor = [], outdoor = [], band =
     { key: 'indoor', label: 'Indoor', color: SERIES.primary, format: temp },
     { key: 'outdoor', label: 'Outdoor', color: SERIES.context, format: temp },
   ];
+  const scope = occupied ? 'occupied half-hours' : 'half-hours';
   return (
     <ChartFrame
       title="Indoor temperature against the comfort band"
-      summary={violations ? `${violations} of ${indoor.length} half-hours fall outside ${band[0]}–${band[1]} °C.` : `Indoor temperature stays within ${band[0]}–${band[1]} °C all day.`}
+      summary={violations
+        ? `${violations} of ${assessedCount} ${scope} fall outside ${band[0]}–${band[1]} °C.`
+        : `Indoor temperature stays within ${band[0]}–${band[1]} °C ${occupied ? 'while the room is in use' : 'all day'}.`}
       legend={[
         { label: 'Indoor', color: SERIES.primary },
         { label: 'Outdoor', color: SERIES.context },
         { label: `Comfort band ${band[0]}–${band[1]} °C`, color: 'rgb(var(--ink-3))', kind: 'wash' },
+        ...(occupiedWindow ? [{ label: `In use ${occupiedWindow.start}–${occupiedWindow.end}`, color: OCCUPIED_FILL, kind: 'wash' }] : []),
         ...(markViolations ? [{ label: 'Outside the band', color: CRITICAL, kind: 'dot' }] : []),
       ]}
       table={{
         columns: [
           { key: 'slot', label: 'Time' },
-          { key: 'indoor', label: 'Indoor °C', numeric: true, format: (v, row) => `${Number(v).toFixed(1)}${row.indoor < band[0] || row.indoor > band[1] ? ' ⚠ outside band' : ''}` },
+          { key: 'indoor', label: 'Indoor °C', numeric: true, format: (v, row) => `${Number(v).toFixed(1)}${outsideBand(row) ? ' ⚠ outside band' : ''}` },
           { key: 'outdoor', label: 'Outdoor °C', numeric: true, format: (v) => (v === undefined ? '—' : Number(v).toFixed(1)) },
         ],
         rows: data,
@@ -420,6 +433,7 @@ export function TemperatureChart({ slots = [], indoor = [], outdoor = [], band =
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 16, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} stroke={GRID} />
+          {occupiedWindow && <ReferenceArea x1={occupiedWindow.start} x2={occupiedWindow.end} fill={OCCUPIED_FILL} fillOpacity={0.08} />}
           <ReferenceArea y1={band[0]} y2={band[1]} fill={BAND} fillOpacity={0.07} />
           <XAxis {...(narrow ? axisProps.xNarrow : axisProps.x)} />
           <YAxis {...axisProps.y} domain={domain} tickFormatter={(v) => `${v}°`} width={40} />

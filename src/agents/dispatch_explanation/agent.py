@@ -60,6 +60,10 @@ DEFAULT_BATTERY = {
 # Fields a caller (the dispatch form) may override per request.
 _REQUEST_BATTERY_FIELDS = ("battery_capacity_kwh", "max_charge_rate_kw", "max_discharge_rate_kw", "initial_soc_ratio")
 _DT_HOURS = 0.5
+# Demand-charge and tier-limit inputs passed straight to the optimizer when present. The tier
+# profiles themselves go through _tier_loads(), and the grid limit is read separately.
+_LOAD_FIELDS = ("tier1_max_reduction_ratio", "tier2_max_kw", "power_factor", "month_to_date_peak_kva")
+_TIER_PROFILE_FIELDS = ("tier0_load_kw", "tier1_load_kw", "tier2_load_kw")
 
 
 class DispatchExplanationAgent(BaseAgent):
@@ -106,6 +110,7 @@ class DispatchExplanationAgent(BaseAgent):
         demand_charge = input_data.get("max_demand_penalty_lkr_kva")
         grid_limit = input_data.get("max_grid_import_kw")
         battery = self._battery_parameters(input_data)
+        load_inputs = {k: input_data[k] for k in _LOAD_FIELDS if input_data.get(k) is not None}
 
         # Default tariffs if missing
         if not tariffs:
@@ -119,6 +124,7 @@ class DispatchExplanationAgent(BaseAgent):
             peak_demand_penalty_lkr_kva=float(demand_charge) if demand_charge is not None else MAX_DEMAND_SURCHARGE_LKR_KVA,
             max_grid_import_kw=float(grid_limit) if grid_limit is not None else None,
             **battery,
+            **load_inputs,
         )
 
         # 1. Solve MILP Optimization (with fairness tiers when requested and supported)
@@ -152,6 +158,7 @@ class DispatchExplanationAgent(BaseAgent):
             citations=citations,
             grounding_text=self._grounding_text(
                 input_data.get("request_parameters"), tariff_summary, comfort_feasible, battery, tier_dispatch,
+                solver_output,
             ),
         )
 
@@ -178,6 +185,7 @@ class DispatchExplanationAgent(BaseAgent):
         comfort_feasible: Optional[bool],
         battery: Dict[str, float],
         tier_dispatch: Optional[Dict[str, Any]] = None,
+        solver_output: Any = None,
     ) -> str:
         """System-provided context an explanation may quote, besides solver output and citations.
 
@@ -186,6 +194,8 @@ class DispatchExplanationAgent(BaseAgent):
         parser values and configured default rates are context, not proof that a tariff source is official.
         """
         lines = []
+        if getattr(solver_output, "demand_charge_basis", None):
+            lines.append(f"Demand charge basis: {solver_output.demand_charge_basis}.")
         params = {k: v for k, v in (request_parameters or {}).items() if v is not None}
         if params:
             lines.append("Parsed operator request: " + ", ".join(f"{k} {v}" for k, v in sorted(params.items())))
@@ -210,6 +220,10 @@ class DispatchExplanationAgent(BaseAgent):
 
     def _tier_loads(self, input_data: Dict[str, Any], base_load: List[float]) -> Optional[TierLoads]:
         supplied = input_data.get("tier_loads_kw")
+        if not supplied and all(input_data.get(k) is not None for k in _TIER_PROFILE_FIELDS):
+            # The coordinator's split of the demand forecast (coordinator/load_tiers.py).
+            supplied = {"tier0": input_data["tier0_load_kw"], "tier1": input_data["tier1_load_kw"],
+                        "tier2": input_data["tier2_load_kw"]}
         if supplied:
             loads = TierLoads(
                 tier0_kw=[float(v) for v in supplied["tier0"]],
@@ -318,9 +332,16 @@ class DispatchExplanationAgent(BaseAgent):
             "critical Tier 0 load (research labs, medical rooms, server rooms) was served in full in every interval.",
         ]
         if t1["reduced_kwh"] > 0:
+            # State only the limit that was actually configured: the degree figure needs the twin's
+            # kW per degree; otherwise the cap is the planner's share of air-conditioning load.
+            limits = []
+            if t1.get("kw_per_degree_c"):
+                limits.append(f"{t1['max_flex_c']:g} C")
+            if t1.get("max_reduction_ratio"):
+                limits.append(f"{t1['max_reduction_ratio'] * 100:g}% of the air-conditioning load in any half-hour")
             parts.append(
                 f"Tier 1 cooling was reduced by {t1['reduced_kwh']:.1f} kWh during peak hours, by at most "
-                f"{t1['max_flex_c']:g} C, and the same energy was used to re-cool the rooms later the same day."
+                f"{' and '.join(limits)}, and the same energy was used to re-cool the rooms later the same day."
             )
         else:
             parts.append("Tier 1 rooms (teaching, study, office and residential spaces) were not asked to flex.")

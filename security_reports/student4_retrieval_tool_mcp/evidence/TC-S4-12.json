@@ -1,0 +1,10 @@
+{
+  "test_id": "TC-S4-12",
+  "test_objective": "Verify a type-confusion payload (a string where a number is expected) is rejected gracefully rather than raising an unhandled exception.",
+  "attack_scenario": "MCP tools/call: ambient_temps=[\"'; DROP TABLE tariffs;--\"] \u2014 a classic injection-style string placed in a numeric field, probing whether type coercion happens before or after validation.",
+  "expected_behaviour": "Reject with a controlled error; must never propagate an unhandled exception to the caller.",
+  "actual_behaviour": "Rejected with isError=True, error='could not convert string to float: \"\\'; DROP TABLE tariffs;--\"'. NOTE: this audit initially found SimulationTool.execute() ran float()/int() coercion BEFORE the try/except block, so this exact payload crashed the tool with an unhandled ValueError. Fixed by moving coercion inside the try/except (see src/infrastructure/tools/simulation_tool.py) \u2014 this test now exercises the fixed code path.",
+  "evidence_log": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"null\"}], \"isError\": true, \"error\": \"could not convert string to float: \\\"'; DROP TABLE tariffs;--\\\"\"}}",
+  "severity_and_mitigation": "Severity: Medium, CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:L = 4.3 before mitigation. Assessor's contextual rating: Medium (unhandled exception is a denial-of-service / crash vector for the calling agent, not a data-injection risk since this codebase uses no string-interpolated SQL). Mitigation implemented and verified: type coercion moved inside the try/except in SimulationTool.execute().",
+  "recorded_at": "2026-09-30T22:07:20+0530"
+}

@@ -5,7 +5,7 @@ Executes native cosine distance search using the '<=>' pgvector operator.
 
 from typing import List, Dict, Any, Optional
 from sqlalchemy import text
-from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult
+from src.domain.interfaces.vector_store import VectorStore, VectorSearchResult, validate_vector
 from src.domain.entities.rag import DocumentClause
 from src.domain.exceptions.base import VectorStoreException
 
@@ -14,8 +14,28 @@ class PgVectorStore(VectorStore):
 
     def __init__(self, engine):
         self.engine = engine
+        self._column_dimension: Optional[int] = None
+
+    def column_dimension(self) -> Optional[int]:
+        """Size of the live `document_clauses.embedding` vector(N) column (pgvector stores N as the
+        column's type modifier). None if the table or column does not exist yet."""
+        if self._column_dimension is None:
+            with self.engine.connect() as conn:
+                typmod = conn.execute(text(
+                    "SELECT a.atttypmod FROM pg_attribute a "
+                    "WHERE a.attrelid = to_regclass('document_clauses') AND a.attname = 'embedding' "
+                    "AND NOT a.attisdropped;"
+                )).scalar()
+            self._column_dimension = int(typmod) if typmod and int(typmod) > 0 else None
+        return self._column_dimension
+
+    def _checked(self, vector: List[float]) -> List[float]:
+        return validate_vector(vector, self.column_dimension(), "pgvector")
 
     def add_documents(self, documents: List[DocumentClause]) -> List[str]:
+        for doc in documents:
+            if doc.embedding:
+                self._checked(doc.embedding)  # outside the try: a size mismatch keeps its own clear message
         inserted_ids = []
         try:
             with self.engine.begin() as conn:
@@ -59,6 +79,7 @@ class PgVectorStore(VectorStore):
         top_k: int = 2,
         filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[VectorSearchResult]:
+        query_vector = self._checked(query_vector)
         try:
             vec_str = "[" + ",".join(str(x) for x in query_vector) + "]"
             where_clause = ""

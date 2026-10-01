@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import { useAsync } from '../lib/hooks';
 import { formatDate, formatKw, formatNumber, tomorrowIso } from '../lib/format';
 import { ForecastChart } from '../components/charts';
-import { Card, Checkbox, ErrorPanel, Field, LoadingBlock, PageHeader, Select, StatTile, TextInput } from '../components/ui';
+import { Banner, Card, Checkbox, ErrorPanel, Field, LoadingBlock, PageHeader, Select, StatTile, TextInput } from '../components/ui';
 
 function peak(values = [], slots = []) {
   if (!values.length) return { value: null, slot: null };
@@ -45,6 +45,11 @@ export default function ForecastPage() {
             <StatTile label="Solar peak" value={formatKw(solarPeak.value)} sub={solarPeak.slot ? `at ${solarPeak.slot}` : undefined} />
             <StatTile label="Flagged intervals" value={formatNumber(f.anomaly_count)} sub="Unusually high demand" />
           </div>
+          {f.data_quality_notes?.length > 0 && (
+            <Banner tone="warning" title="Not based on measured data for this date">
+              <ul className="list-disc space-y-0.5 pl-5">{f.data_quality_notes.map((n) => <li key={n}>{n}</li>)}</ul>
+            </Banner>
+          )}
           {f.forecast_summary && <Card title="Summary"><p className="text-sm text-ink">{f.forecast_summary}</p></Card>}
           <Card>
             <ForecastChart
@@ -53,6 +58,14 @@ export default function ForecastPage() {
               historical={showHistory && history.data ? history.data.map((r) => r.base_load_kw) : undefined}
             />
             {showHistory && <p className="mt-2 text-xs text-ink-2">Historical readings carry differential-privacy noise, so they are approximate by design.</p>}
+            {f.data_sources && (
+              <p className="mt-2 text-xs text-ink-2">
+                Inputs: meter history — {f.data_sources.meter_history === 'meter_history' ? 'stored readings' : 'built-in sample day'} ·
+                weather — {f.data_sources.weather === 'open-meteo' ? 'Open-Meteo' : 'offline curve'} ·
+                timetable — {f.data_sources.timetable === 'seed' ? 'demo sessions' : 'uploaded'} ({f.data_sources.scheduled_sessions} sessions that day)
+                {f.model_version ? ` · model ${f.model_version}` : ''}
+              </p>
+            )}
           </Card>
         </div>
       )}
