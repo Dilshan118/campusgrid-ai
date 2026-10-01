@@ -41,6 +41,11 @@ class MeterHistoryRepository(ABC):
         """Returns 48 half-hour telemetry intervals for a specified benchmark date."""
         pass
 
+    def get_historical_profile_with_source(self, date_str: str):
+        """(intervals, source): source is 'meter_history' when rows exist for that date, or
+        'seed_profile' when the built-in sample day was substituted."""
+        return self.get_historical_profile(date_str), "unknown"
+
     @abstractmethod
     def append_reading(self, reading: TelemetryInterval) -> bool:
         pass

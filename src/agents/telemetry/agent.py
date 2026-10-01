@@ -41,6 +41,18 @@ def _scheduled_occupancy(room_id: str, time_slot: str, schedule: List[Dict[str, 
             return int(entry["expected_students"])
     return 0
 
+def _data_quality_notes(meter_source: str, weather_source: Optional[str]) -> List[str]:
+    notes = []
+    if meter_source != "meter_history":
+        notes.append(
+            "No meter readings are stored for this date; the forecast is built on the built-in sample "
+            "campus day, not on this campus's measured demand."
+        )
+    if weather_source != "open-meteo":
+        notes.append("Live weather was unavailable; an offline temperature curve was used.")
+    return notes
+
+
 class TelemetryForecastingAgent(BaseAgent):
     """Agent 1: Predicts day-ahead electricity demand and solar generation."""
 
@@ -72,11 +84,12 @@ class TelemetryForecastingAgent(BaseAgent):
         day_of_week = _iso_weekday(target_date)
 
         # 1. Fetch historical benchmark meter intervals
-        historical = self.meter_repo.get_historical_profile(target_date)
+        historical, meter_source = self._historical_with_source(target_date)
 
         # 2. Fetch ambient temperature series from weather tool
         weather_res = self.weather_tool.execute(date=target_date)
         temp_series = weather_res.data.get("temperature_series_c", [28.0] * len(historical))
+        weather_source = weather_res.data.get("origin_source") or weather_res.data.get("source", "unknown")
 
         # 3. Occupancy. The forecaster predicts CAMPUS demand, so it gets the campus headcount it
         #    was trained on (meter history). The room's own timetable, for the target weekday, is
@@ -112,7 +125,26 @@ class TelemetryForecastingAgent(BaseAgent):
             "anomaly_count": len(forecast.anomaly_indices),
             "tariffs_lkr_kwh": [item.grid_tariff_lkr_kwh for item in historical],
             "forecast_summary": forecast_summary,
+            "model_version": forecast.model_version,
+            # Provenance of every input, so seed/offline data can never be mistaken for measured data.
+            "data_sources": {
+                "meter_history": meter_source,
+                "weather": weather_source,
+                "timetable": self._timetable_source(),
+                "scheduled_sessions": len(schedule),
+            },
+            "data_quality_notes": _data_quality_notes(meter_source, weather_source),
         }
+
+    def _historical_with_source(self, target_date: str):
+        with_source = getattr(self.meter_repo, "get_historical_profile_with_source", None)
+        if callable(with_source):
+            return with_source(target_date)
+        return self.meter_repo.get_historical_profile(target_date), "unknown"
+
+    def _timetable_source(self) -> str:
+        source = getattr(self.timetable_repo, "source", None)
+        return str(source()) if callable(source) else "unknown"
 
     def get_privacy_protected_export(
         self,
