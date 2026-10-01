@@ -43,6 +43,11 @@ DEFAULT_BATTERY = {
 }
 # Fields a caller (the dispatch form) may override per request.
 _REQUEST_BATTERY_FIELDS = ("battery_capacity_kwh", "max_charge_rate_kw", "max_discharge_rate_kw", "initial_soc_ratio")
+# Load tiers, grid limit and demand-charge inputs passed straight to the optimizer when present.
+_LOAD_FIELDS = (
+    "tier0_load_kw", "tier1_load_kw", "tier2_load_kw", "tier1_max_reduction_ratio", "tier2_max_kw",
+    "max_grid_import_kw", "power_factor", "month_to_date_peak_kva",
+)
 
 
 class DispatchExplanationAgent(BaseAgent):
@@ -83,6 +88,7 @@ class DispatchExplanationAgent(BaseAgent):
         tariff_summary = input_data.get("tariff_summary")
         demand_charge = input_data.get("max_demand_penalty_lkr_kva")
         battery = self._battery_parameters(input_data)
+        load_inputs = {k: input_data[k] for k in _LOAD_FIELDS if input_data.get(k) is not None}
 
         # Default tariffs if missing
         if not tariffs:
@@ -95,6 +101,7 @@ class DispatchExplanationAgent(BaseAgent):
             grid_tariff_lkr_kwh=tariffs,
             peak_demand_penalty_lkr_kva=float(demand_charge) if demand_charge is not None else MAX_DEMAND_SURCHARGE_LKR_KVA,
             **battery,
+            **load_inputs,
         )
 
         # 1. Solve MILP Optimization
@@ -121,7 +128,7 @@ class DispatchExplanationAgent(BaseAgent):
             explanation_text=explanation,
             solver_output=solver_output,
             citations=citations,
-            grounding_text=self._grounding_text(user_query, tariff_summary, comfort_feasible, battery),
+            grounding_text=self._grounding_text(user_query, tariff_summary, comfort_feasible, battery, solver_output),
         )
 
         return {
@@ -145,9 +152,18 @@ class DispatchExplanationAgent(BaseAgent):
         tariff_summary: Optional[Dict[str, Any]],
         comfort_feasible: Optional[bool],
         battery: Dict[str, float],
+        solver_output: Any = None,
     ) -> str:
         """Verified context an explanation may quote, besides the solver output and the citations."""
-        return "\n".join([
+        extra = []
+        if getattr(solver_output, "demand_charge_basis", None):
+            extra.append(f"Demand charge basis: {solver_output.demand_charge_basis}.")
+        if getattr(solver_output, "served_tier1_kw", None) is not None:
+            extra.append(
+                "Air-conditioning (Tier 1) load may be shifted between half-hours with the same daily energy; "
+                "critical (Tier 0) load is never curtailed; shiftable (Tier 2) equipment may be rescheduled."
+            )
+        return "\n".join(extra + [
             f"Operator request: {user_query}",
             f"Retrieved tariff:\n{tariff_text(tariff_summary)}",
             f"Comfort verdict: {comfort_verdict_text(comfort_feasible)}",

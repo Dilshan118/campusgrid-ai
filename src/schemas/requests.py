@@ -72,6 +72,16 @@ class OptimizationRunRequest(BaseModel):
     initial_soc_ratio: float = Field(default=0.50, ge=0.20, le=0.90)
     date: Optional[IsoDate] = Field(default=None, pattern=ISO_DATE_PATTERN, description="Forecast date; defaults to tomorrow")
     room: str = Field(default="LH-1", max_length=20)
+    # Flexible loads and billing state (all optional; omitted = site settings).
+    hvac_flex_percent: Optional[float] = Field(
+        default=None, ge=0, le=50,
+        description="How far air-conditioning load may move per half-hour, energy-neutral (0 = HVAC not flexed)",
+    )
+    shiftable_load_kw: float = Field(default=0.0, ge=0, le=2000, description="Rated power of shiftable Tier-2 equipment (pumps, EV chargers)")
+    shiftable_hours: float = Field(default=0.0, ge=0, le=24, multiple_of=0.5, description="Hours per day that equipment must run")
+    shiftable_usual_start: str = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):(00|30)$", description="When it normally starts")
+    month_to_date_peak_kva: Optional[float] = Field(default=None, ge=0, le=100_000, description="Highest demand this billing month so far (CEB bill / meter)")
+    power_factor: Optional[float] = Field(default=None, gt=0.5, le=1.0)
 
 class RAGSearchRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=1000)

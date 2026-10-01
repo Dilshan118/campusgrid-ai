@@ -272,6 +272,7 @@ class Container:
                 "max_soc_kwh": physics.battery_capacity_kwh * physics.battery_max_soc,
                 "max_power_kw": physics.battery_max_power_kw,
             },
+            load_flexibility=self.settings.load_flexibility.model_dump(),
         )
 
     def nlp_parser_rooms(self) -> List[Dict[str, Any]]:
