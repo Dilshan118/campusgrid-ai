@@ -110,14 +110,39 @@ def check_numbers(
 
 
 def _parse_verdict(reply: str) -> Optional[Dict[str, Any]]:
-    """Reads the auditor's JSON even when wrapped in prose or ```json fences; None if unusable."""
-    match = re.search(r"\{.*\}", reply or "", re.DOTALL)
-    try:
-        parsed = json.loads(match.group(0) if match else reply)
-    except (TypeError, ValueError):
+    """Reads the auditor's JSON even when wrapped in prose, ```json fences, or quotes; None if unusable."""
+    if not reply or not reply.strip():
         return None
+
+    cleaned = re.sub(r"^```(?:json)?\s*", "", reply.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    json_str = match.group(0) if match else cleaned
+
+    # Strip illegal trailing commas before closing braces/brackets
+    json_str = re.sub(r",\s*([\]}])", r"\1", json_str)
+
+    parsed = None
+    try:
+        parsed = json.loads(json_str)
+    except (TypeError, ValueError):
+        # Resilient fallback: extract key fields via regex if full JSON decode fails
+        try:
+            is_faithful_match = re.search(r"\"is_faithful\"\s*:\s*(true|false|\"true\"|\"false\")", json_str, re.IGNORECASE)
+            if is_faithful_match:
+                val = is_faithful_match.group(1).lower().replace("\"", "") == "true"
+                conf_match = re.search(r"\"confidence\"\s*:\s*([0-9.]+)", json_str)
+                conf = float(conf_match.group(1)) if conf_match else 0.9
+                reason_match = re.search(r"\"reasoning\"\s*:\s*\"([^\"]+)\"", json_str)
+                reason = reason_match.group(1) if reason_match else "parsed via fallback"
+                parsed = {"is_faithful": val, "hallucinated_claims": [], "confidence": conf, "reasoning": reason}
+        except Exception:
+            return None
+
     if not isinstance(parsed, dict) or not isinstance(parsed.get("is_faithful"), bool):
         return None
+
     return parsed
 
 
@@ -195,11 +220,18 @@ class FaithfulnessVerifier(FaithfulnessVerifierInterface):
             reference_text="\n".join(reference),
         )
         messages = [
-            LLMMessage(role="system", content="You are a strict factual auditor. Return valid JSON only."),
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are a strict factual auditor. Return valid JSON only with keys: "
+                    "\"is_faithful\", \"hallucinated_claims\", \"confidence\", \"reasoning\". "
+                    "Do NOT wrap in markdown code blocks or conversational commentary."
+                )
+            ),
             LLMMessage(role="user", content=prompt)
         ]
         try:
-            response = self.llm.generate(messages=messages, temperature=0.0)
+            response = self.llm.generate(messages=messages, temperature=0.0, max_tokens=1000)
         except Exception as exc:  # provider outage: fail closed, never "verified by default"
             return None, f"model call failed: {type(exc).__name__}"
         verdict = _parse_verdict(response.content)

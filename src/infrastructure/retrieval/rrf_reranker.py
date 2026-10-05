@@ -3,7 +3,7 @@ CampusGrid AI: Reciprocal Rank Fusion (RRF) Reranker
 Combines dense semantic rankings and sparse BM25 lexical rankings into an optimal unified order.
 """
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from src.domain.interfaces.reranker import Reranker, RerankResult
 from src.domain.entities.rag import DocumentClause
 
@@ -16,21 +16,24 @@ class RRFReranker(Reranker):
     def rerank_ranked_lists(
         self,
         ranked_lists: List[List[DocumentClause]],
-        top_k: int = 2
+        top_k: int = 2,
+        weights: Optional[List[float]] = None,
     ) -> List[RerankResult]:
         """
-        Fuses multiple ranked candidate lists using RRF score:
-        RRF(d) = SUM_m [ 1 / (k + rank_m(d)) ]
+        Fuses multiple ranked candidate lists using weighted RRF score:
+        RRF(d) = SUM_m [ w_m / (k + rank_m(d)) ]
         """
         rrf_scores: Dict[str, float] = {}
         doc_map: Dict[str, DocumentClause] = {}
+        effective_weights = weights if (weights and len(weights) == len(ranked_lists)) else [1.0] * len(ranked_lists)
 
-        for rank_list in ranked_lists:
+        for list_idx, rank_list in enumerate(ranked_lists):
+            w = effective_weights[list_idx]
             for rank_idx, doc in enumerate(rank_list):
                 doc_key = f"{doc.source_document}_{doc.clause_reference}"
                 doc_map[doc_key] = doc
                 rank = rank_idx + 1
-                rrf_scores[doc_key] = rrf_scores.get(doc_key, 0.0) + (1.0 / (self.k + rank))
+                rrf_scores[doc_key] = rrf_scores.get(doc_key, 0.0) + (w / (self.k + rank))
 
         sorted_keys = sorted(rrf_scores.keys(), key=lambda k: rrf_scores[k], reverse=True)
 

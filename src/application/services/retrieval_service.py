@@ -10,6 +10,7 @@ domain interfaces (VectorStore, EmbeddingProvider, KeywordSearchEngine, Reranker
 
 import copy
 import logging
+import re
 import threading
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -78,6 +79,29 @@ _FALLBACK_CLAUSES = [
 
 def _doc_key(clause: DocumentClause) -> str:
     return f"{clause.source_document}_{clause.clause_reference}"
+
+
+_DOMAIN_EXPANSIONS = {
+    r"\b(peak\s*(hours?|window|tariff|rate|pricing)?)\b": "peak 18:30 22:30 TOU rate",
+    r"\b(night\s*(hours?|tariff|rate)?|off[\s-]?peak)\b": "off-peak 22:30 05:30 night rate",
+    r"\b(day\s*(time|hours?|tariff|rate)?)\b": "day-time 05:30 18:30 energy rate",
+    r"\b(demand\s*(charges?|surcharges?|penalty)?|kva)\b": "maximum demand charge monthly surcharge 1100 kva 15-minute",
+    r"\b(comfort|indoor\s*temp(erature)?|operative\s*temp(erature)?)\b": "ASHRAE 55 operative temperature envelope 21.0 25.5 sedentary",
+    r"\b(precool(ing)?|thermal\s*drift)\b": "precooling thermal inertia drift 1.1 21.0",
+    r"\b(humidity|air\s*velocity|draft)\b": "air velocity relative humidity microbial draft",
+    r"\b(solar|pv|net\s*metering)\b": "solar net metering export credit",
+}
+
+
+def expand_sparse_query(query: str) -> str:
+    """Enriches colloquial campus and engineering queries with statutory domain keywords for BM25."""
+    additions = []
+    for pattern, expansion in _DOMAIN_EXPANSIONS.items():
+        if re.search(pattern, query, re.IGNORECASE):
+            additions.append(expansion)
+    if not additions:
+        return query
+    return f"{query} {' '.join(additions)}"
 
 
 class RetrievalService:
@@ -199,9 +223,10 @@ class RetrievalService:
             dense_candidates = [r.clause for r in self.vector_store.similarity_search(query_vec, top_k=fetch)]
         dense_candidates = [c for c in dense_candidates if self.in_force(c, as_of)][: top_k * 2]
 
-        # 2. Sparse BM25 search
+        # 2. Sparse BM25 search with domain query expansion
+        sparse_query = expand_sparse_query(query)
         sparse_hits = [
-            (c, s) for c, s in self.keyword_engine.search(query, top_k=max(fetch, len(self.keyword_engine.documents)))
+            (c, s) for c, s in self.keyword_engine.search(sparse_query, top_k=max(fetch, len(self.keyword_engine.documents)))
             if self.in_force(c, as_of)
         ]
         sparse_candidates = [c for c, _ in sparse_hits[:top_k * 2]]
@@ -212,11 +237,15 @@ class RetrievalService:
         known_keys = {_doc_key(c) for c in dense_candidates + sparse_candidates}
         sparse_candidates.extend(c for c in verified_candidates if _doc_key(c) not in known_keys)
 
-        # 3. Fusion
+        # 3. Fusion (balanced semantic + keyword fusion)
         ranked_lists = [dense_candidates, sparse_candidates] if dense_candidates else [sparse_candidates]
         rerank_limit = max(top_k, len(dense_candidates) + len(sparse_candidates))
         if hasattr(self.reranker, "rerank_ranked_lists"):
-            rerank_results = self.reranker.rerank_ranked_lists(ranked_lists, top_k=rerank_limit)
+            weights = [1.0, 1.0] if len(ranked_lists) == 2 else [1.0]
+            try:
+                rerank_results = self.reranker.rerank_ranked_lists(ranked_lists, top_k=rerank_limit, weights=weights)
+            except TypeError:
+                rerank_results = self.reranker.rerank_ranked_lists(ranked_lists, top_k=rerank_limit)
         else:
             rerank_results = self.reranker.rerank(query, dense_candidates + sparse_candidates, top_k=rerank_limit)
 

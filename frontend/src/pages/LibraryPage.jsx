@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckCircle2, FilePlus2, Library, RefreshCw, ShieldAlert, ShieldCheck, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -135,6 +135,40 @@ function SubmitPanel({ documents, onSubmitted }) {
     }
   }
 
+  const [screening, setScreening] = useState({ clauses: 0, flags: [], sha256: '' });
+
+  useEffect(() => {
+    const rawText = typeof text === 'string' ? text : '';
+    if (!rawText.trim()) {
+      setScreening({ clauses: 0, flags: [], sha256: '' });
+      return;
+    }
+    const lines = rawText.split(/\r?\n/);
+    const clauseCount = lines.filter((l) => /^###\s+clause/i.test(l.trim())).length;
+
+    const flags = [];
+    const lower = rawText.toLowerCase();
+    if (/ignore\s+(all\s+)?(previous|prior)\s+instructions?/i.test(lower)) flags.push('Instruction Override / Jailbreak');
+    if (/system\s*:\s*/i.test(lower)) flags.push('Role Impersonation (System Tag)');
+    if (/<script|javascript:/i.test(lower)) flags.push('XSS / Executable Markup');
+    if (/drop\s+table|delete\s+from/i.test(lower)) flags.push('SQL Injection Pattern');
+    if (/you\s+are\s+(now\s+)?(dan|evil|unrestricted)/i.test(lower)) flags.push('Persona Hijacking');
+
+    if (window.crypto?.subtle) {
+      const encoder = new TextEncoder();
+      window.crypto.subtle.digest('SHA-256', encoder.encode(rawText)).then((buf) => {
+        const hashHex = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        setScreening({ clauses: clauseCount, flags, sha256: hashHex });
+      }).catch(() => {
+        setScreening({ clauses: clauseCount, flags, sha256: '' });
+      });
+    } else {
+      setScreening({ clauses: clauseCount, flags, sha256: '' });
+    }
+  }, [text]);
+
   return (
     <Card title="Submit a regulation for review"
       description="Upload a .md or .txt file, or paste the text. Each “### Clause x.y: Title” heading becomes one clause. PDFs: copy the text out, or add the file to the corpus folder.">
@@ -169,6 +203,52 @@ function SubmitPanel({ documents, onSubmitted }) {
           <Textarea id="reg-text" className="min-h-[180px] font-mono text-xs" value={text} maxLength={200000} onChange={(e) => { setText(e.target.value); setFilename(null); }}
             placeholder={'### Clause 4.1: Peak Energy Charges\nConsumption during the peak window (18:30 to 22:30 hours) shall be billed at LKR 58.00 per kWh.'} />
         </Field>
+
+        {/* Real-time Pre-Ingestion Screening Sandbox */}
+        {text.trim() && (
+          <div className="rounded-xl border border-line bg-surface-2 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-2">Pre-Ingestion Screening Sandbox</span>
+              <span className="text-[11px] text-ink-3">Live Validation</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="rounded-lg border border-line bg-surface p-2.5">
+                <span className="block text-[11px] text-ink-3">Clauses Detected</span>
+                <span className={`text-sm font-semibold tabular ${screening.clauses > 0 ? 'text-ink' : 'text-amber-700 dark:text-amber-400'}`}>
+                  {screening.clauses} clause{screening.clauses !== 1 ? 's' : ''}
+                </span>
+                {screening.clauses === 0 && (
+                  <span className="block text-[10px] text-ink-3 mt-0.5">Prefix sections with ### Clause</span>
+                )}
+              </div>
+              <div className="rounded-lg border border-line bg-surface p-2.5">
+                <span className="block text-[11px] text-ink-3">Injection Screening</span>
+                <span className={`text-sm font-semibold flex items-center gap-1 ${screening.flags.length === 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-critical-text'}`}>
+                  {screening.flags.length === 0 ? (
+                    <>
+                      <ShieldCheck className="h-3.5 w-3.5" /> Clean (0 flags)
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert className="h-3.5 w-3.5" /> {screening.flags.length} Flag{screening.flags.length !== 1 ? 's' : ''}
+                    </>
+                  )}
+                </span>
+                {screening.flags.length > 0 && (
+                  <span className="block text-[10px] text-critical-text mt-0.5">{screening.flags.join(', ')}</span>
+                )}
+              </div>
+              <div className="rounded-lg border border-line bg-surface p-2.5">
+                <span className="block text-[11px] text-ink-3">Live Content Hash</span>
+                <span className="font-mono text-[11px] text-ink truncate block">
+                  {screening.sha256 ? `${screening.sha256.slice(0, 14)}...` : 'Computing...'}
+                </span>
+                <span className="block text-[10px] text-ink-3 mt-0.5">SHA-256 Digest</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         <Button type="submit" icon={FilePlus2} loading={busy}>Submit for review</Button>
       </form>
     </Card>
