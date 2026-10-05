@@ -6,9 +6,9 @@
   "actual_behaviour": "Input safely clamped to exactly 10,000 characters without memory spikes.",
   "evidence_log": "[Sanitizer] Buffer clamped: 33000 chars -> 10000 chars.",
   "severity_and_mitigation": "Severity: Medium (CVSS 5.3). Mitigation: Input length limits enforced in middleware prior to LLM or embedding processing.",
-  "evidence_generated_utc": "2026-10-01T09:37:47.865993+00:00",
+  "evidence_generated_utc": "2026-10-05T06:38:27.073756+00:00",
   "test_source": "tests/red_team_security_audits/test_student1_*.py",
-  "python_version": "3.12.10",
-  "embedding_provider": "mock",
-  "llm_provider": "mock"
+  "python_version": "3.10.20",
+  "embedding_provider": "configured-default",
+  "llm_provider": "configured-default"
 }

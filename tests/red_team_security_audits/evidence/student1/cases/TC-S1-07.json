@@ -6,9 +6,9 @@
   "actual_behaviour": "Input cleansed: zero-width space removed; normalized representation generated.",
   "evidence_log": "[Sanitizer] Raw length: 11 -> Cleaned length: 10 | Zero-width chars stripped.",
   "severity_and_mitigation": "Severity: Low (CVSS 3.7). Mitigation: Unicodedata NFKC normalization strips invisible obfuscation tokens before NLP parsing.",
-  "evidence_generated_utc": "2026-10-01T09:37:47.684247+00:00",
+  "evidence_generated_utc": "2026-10-05T06:38:26.967594+00:00",
   "test_source": "tests/red_team_security_audits/test_student1_*.py",
-  "python_version": "3.12.10",
-  "embedding_provider": "mock",
-  "llm_provider": "mock"
+  "python_version": "3.10.20",
+  "embedding_provider": "configured-default",
+  "llm_provider": "configured-default"
 }
